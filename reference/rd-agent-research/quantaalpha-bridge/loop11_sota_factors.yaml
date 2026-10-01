@@ -1,0 +1,27 @@
+# Loop11 locked SOTA + P3 validated incremental factor (stack_validate 2026-08-23)
+# Use with scripts/stack_validate_loop11.py
+
+loop11:
+  feilong_geo_squeeze_regime:
+    role: entry
+    note: "Python impl in stack_validate_loop11.py (geo VWAP*EMA squeeze)"
+  exit_pressure_additive:
+    role: exit
+    note: "range_position + vwap_extension + volume_regime / 3"
+  rr_atr_regime:
+    role: rr
+    note: "raw_rr / clipped vol_z"
+
+p3_validated:
+  Relative_Spread_Compression_ZSCORE:
+    expression: "ZSCORE(RANK(($high - $low) / (TS_STD($high - $low, 20) + 1e-8)))"
+    stack_result:
+      vs_loop11_only:
+        rank_ic_delta: 0.0035
+        ann_delta: 0.041
+        max_dd_delta: 0.019
+    status: candidate
+
+rejected:
+  Block_Conviction_Score:
+    reason: "Hurts stack vs loop11_only (ann 16.1% vs 17.3%)"

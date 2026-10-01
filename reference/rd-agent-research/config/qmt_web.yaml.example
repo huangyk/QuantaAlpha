@@ -1,0 +1,16 @@
+# 复制为 config/qmt_web.yaml（已 gitignore）可覆盖默认值。
+bind_host: 127.0.0.1
+bind_port: 8876
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 0
+  password: null
+  key_prefix: "qqmt:qmtweb:"
+  socket_timeout: 15
+  max_connections: 16
+inventory_cache_sec: 600
+heartbeat_sec: 15
+hung_after_sec: 180
+download_chunk_1d: 500
+download_chunk_5m: 100

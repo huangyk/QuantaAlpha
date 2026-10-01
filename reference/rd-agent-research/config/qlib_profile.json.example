@@ -1,0 +1,41 @@
+{
+  "active": "research",
+  "profiles": {
+    "smoke": {
+      "provider_uri": "C:/Users/lenovo/.qlib/qlib_data/cn_data_v2",
+      "market": "subset100",
+      "benchmark": "SH600000",
+      "start": "2025-01-27",
+      "end": "2025-12-31",
+      "fit_end": "2025-06-30",
+      "train": ["2025-01-27", "2025-06-30"],
+      "valid": ["2025-07-01", "2025-09-30"],
+      "test": ["2025-10-01", "2025-12-31"],
+      "backtest": ["2025-10-01", "2025-12-30"]
+    },
+    "research": {
+      "provider_uri": "C:/Users/lenovo/.qlib/qlib_data/cn_real_r500",
+      "market": "all",
+      "benchmark": "SH600000",
+      "start": "2020-01-02",
+      "end": "2026-08-18",
+      "fit_end": "2023-12-29",
+      "train": ["2020-01-02", "2023-12-29"],
+      "valid": ["2024-01-02", "2024-12-31"],
+      "test": ["2025-01-02", "2026-08-17"],
+      "backtest": ["2025-01-02", "2026-08-17"]
+    },
+    "research_full": {
+      "provider_uri": "C:/Users/lenovo/.qlib/qlib_data/cn_real_full",
+      "market": "all",
+      "benchmark": "SH600000",
+      "start": "2020-01-02",
+      "end": "2026-08-18",
+      "fit_end": "2023-12-29",
+      "train": ["2020-01-02", "2023-12-29"],
+      "valid": ["2024-01-02", "2024-12-31"],
+      "test": ["2025-01-02", "2026-08-17"],
+      "backtest": ["2025-01-02", "2026-08-17"]
+    }
+  }
+}
