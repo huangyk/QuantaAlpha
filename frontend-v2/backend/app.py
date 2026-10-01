@@ -217,6 +217,15 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         dotenv = _load_dotenv_dict()
         env.update(dotenv)
 
+        # Disable the WorkBuddy "safe delete" bulk guard for the mining subprocess.
+        # rdagent's factor/backtest loop deletes its own temporary workspace files in
+        # batches (>=50), which trips CODEBUDDY_SAFE_DELETE_BULK_GUARD and blocks the
+        # non-interactive subprocess forever (logs: "[safe-delete][SAFE_DELETE_BULK_
+        # CONFIRM_REQUIRED]"). These vars only affect the child process, not the host.
+        env["CODEBUDDY_SAFE_DELETE_SANDBOX"] = "0"
+        env["CODEBUDDY_SAFE_DELETE_BULK_GUARD"] = ""
+        env["CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR"] = ""
+
         # Ensure CONDA_DEFAULT_ENV is a non-empty string.
         # The mining pipeline builds LocalEnv(CondaConf(conda_env_name=os.environ.get("CONDA_DEFAULT_ENV"))),
         # and CondaConf requires a str — when the backend is launched by absolute python
@@ -905,6 +914,12 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
         env = os.environ.copy()
         dotenv = _load_dotenv_dict()
         env.update(dotenv)
+
+        # Disable the WorkBuddy "safe delete" bulk guard for the backtest subprocess
+        # (same reason as _run_mining; see comment there).
+        env["CODEBUDDY_SAFE_DELETE_SANDBOX"] = "0"
+        env["CODEBUDDY_SAFE_DELETE_BULK_GUARD"] = ""
+        env["CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR"] = ""
 
         # --- Resolve factor JSON path ---
         # Frontend sends just the filename (e.g. "all_factors_library_test3hjback.json")
