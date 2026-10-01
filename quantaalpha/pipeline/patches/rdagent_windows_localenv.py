@@ -25,13 +25,10 @@ Windows 兼容垫片：运行时 monkey-patch rdagent 的 LocalEnv，使其能�
 from __future__ import annotations
 
 import os
-import re
 import sys
-import json
 import subprocess
 import threading
 import contextlib
-import time
 import logging
 from pathlib import Path
 from typing import Any, Generator, Mapping
@@ -186,51 +183,6 @@ def _win_symlink_ctx(vol_map: Mapping[str, str]) -> Generator[None, None, None]:
                 pass
 
 
-# --------------------------------------------------------------------------- #
-# Windows 下正确的 conda 环境 PATH                                             #
-#   rdagent 的 CondaConf.change_bin_path 用 `conda run ... | grep '^PATH='`，  #
-#   但 Windows 的 cmd.exe 没有 grep，会抓到整段环境变量的垃圾。这里改用        #
-#   `conda info --json`（Python 解析，返回原生 Windows 路径）构造。            #
-# --------------------------------------------------------------------------- #
-_CONDA_ENV_PATHS_CACHE: dict = {}
-
-
-def _win_conda_env_paths(conda_env_name: str | None) -> list[str]:
-    if conda_env_name in _CONDA_ENV_PATHS_CACHE:
-        return _CONDA_ENV_PATHS_CACHE[conda_env_name]
-    dirs: list[str] = []
-    try:
-        r = subprocess.run("conda info --json", shell=True, capture_output=True, text=True, timeout=40)
-        info = json.loads(r.stdout)
-        envs = info.get("envs", [])
-        root = info.get("root_prefix") or info.get("conda_prefix") or ""
-        target = None
-        for e in envs:
-            if e.rstrip("\\/").endswith(conda_env_name or ""):
-                target = e
-                break
-        if target is None and root and conda_env_name:
-            target = os.path.join(root, "envs", conda_env_name)
-        if target and os.path.isdir(target):
-            for sub in ["", "Scripts", "Library/bin", "Library/mingw-w64/bin", "Library/usr/bin", "bin"]:
-                p = os.path.normpath(os.path.join(target, sub))
-                if os.path.isdir(p):
-                    dirs.append(p)
-    except Exception as _e:  # pragma: no cover
-        logger.warning(f"conda info 解析失败: {_e}")
-    if not dirs:
-        # 兜底：用当前 python 所在环境
-        exe = sys.executable
-        if exe:
-            base = os.path.dirname(exe)
-            for sub in ["", "Scripts", "Library/bin"]:
-                p = os.path.normpath(os.path.join(base, sub))
-                if os.path.isdir(p):
-                    dirs.append(p)
-    _CONDA_ENV_PATHS_CACHE[conda_env_name] = dirs
-    return dirs
-
-
 def _windows_localenv_run(
     self,
     entry: str | None = None,
@@ -264,17 +216,16 @@ def _windows_localenv_run(
     with _win_symlink_ctx(volumes):
         if env is None:
             env = {}
-        # PATH 构造：
-        #   - Windows：CondaConf.change_bin_path 用 `conda run ... | grep` 在 cmd 下抓到垃圾，
-        #     这里改用 `conda info --json` 解析出的原生 Windows 环境目录，再并入现有 PATH。
+        # PATH 处理：
+        #   - Windows：**不重写 PATH**。rdagent 的 CondaConf.change_bin_path / 以及这里按
+        #     conda_env_name 前置 conda 环境目录，会把 <env>\Library\bin 里的 MKL 运行时 DLL
+        #     （mkl_*.dll、libiomp5md.dll 等）顶到 PATH 最前，导致 quantaalpha 的 numpy/pandas
+        #     在 SigAnaRecord 计算 IC 时加载到版本不匹配的原生库而硬崩溃（exit 120，训练完成
+        #     后无 traceback 直接退出）。实测：前置 quantaalpha 自己的 Library/bin 同样崩溃，
+        #     而不重写 PATH 时 shell=True 也能正常跑完。下面已把 qrun/python 命令统一翻译成
+        #     用 sys.executable 显式执行，因此根本不需要依赖 PATH。
         #   - Unix：保持 rdagent 原版逻辑。
-        if os.name == "nt":
-            conda_dirs = _win_conda_env_paths(getattr(self.conf, "conda_env_name", None))
-            raw_parts: list[str] = list(conda_dirs)
-            raw_parts += re.split(r"[:;]", os.environ.get("PATH", ""))
-            win_parts = [w for w in (w.strip() for w in raw_parts) if w]
-            env["PATH"] = ";".join(win_parts)
-        else:
+        if os.name != "nt":
             path = [
                 *self.conf.bin_path.split(":"),
                 "/bin/",
@@ -286,19 +237,21 @@ def _windows_localenv_run(
         if entry is None:
             entry = self.conf.default_entry
 
-        # --- qrun 翻译（Windows 关键修复） ---
-        # rdagent 的 QlibFBWorkspace.execute() 传 entry="qrun conf_xxx.yaml"。
-        # 若直接交给 shell，会命中 PATH 里 quantaalpha\Scripts\qrun.exe —— 这个
-        # pyinstaller 启动器内部加载的是 rd-agent 环境的 qlib，在
-        # SigAnaRecord/PortAnaRecord 阶段退出码 127 直接崩（mlflow recorder FAILED，
-        # read_exp_res.py 读不到结果 -> "No result file found" -> Backtesting result
-        # is None -> 0 有效因子）。
-        # 改为用当前 quantaalpha 的 python 直跑 qlib.cli.run，与手动验证一致
-        # （python -m qlib.cli.run conf_combined_factors.yaml 退出 0、FINISHED、
-        # Rank IC ~0.06）。
-        if os.name == "nt" and isinstance(entry, str) and entry.strip().startswith("qrun "):
-            rest = entry.strip()[len("qrun ") :]
-            entry = f'"{sys.executable}" -m qlib.cli.run {rest}'
+        # --- 命令翻译（Windows 关键修复） ---
+        # rdagent 默认 entry 是 "qrun conf.yaml" / "python xxx.py"（QlibFBWorkspace.execute()
+        # 传 qrun；utils.generate 传 python generate.py；read_exp_res 传 python read_exp_res.py）。
+        # 这些依赖 PATH 里的 qrun.exe / python.exe：
+        #   - quantaalpha\Scripts\qrun.exe 是 pyinstaller 启动器，内部加载的是 rd-agent 环境的
+        #     qlib，在 SigAnaRecord/PortAnaRecord 阶段退出码 127 直接崩；
+        #   - 裸 `python` 可能命中其它环境的解释器。
+        # 统一改成用当前 quantaalpha 的 python 显式执行，与手动验证一致
+        # （python -m qlib.cli.run conf_combined_factors.yaml 退出 0、FINISHED、Rank IC ~0.06）。
+        if os.name == "nt" and isinstance(entry, str):
+            _e = entry.strip()
+            if _e.startswith("qrun "):
+                entry = f'"{sys.executable}" -m qlib.cli.run {_e[len("qrun ") :]}'
+            elif _e.startswith("python "):
+                entry = f'"{sys.executable}" {_e[len("python ") :]}'
 
         if Console is not None:
             Console().print(Rule("[bold green]LocalEnv Logs Begin (win-patched)[/bold green]", style="dark_orange"))
@@ -366,6 +319,16 @@ def _windows_localenv_run(
                 pass
         t_out.join(timeout=30)
         t_err.join(timeout=30)
+
+        # 落盘调试：仅当子进程失败（非 0 退出）时，把完整输出写入 workspace 的
+        # localenv_debug.log，便于定位回测 FAILED 的真实原因（runner 只截断打印前 500 字，
+        # 会掩盖真正的 traceback/退出码）。成功时不落盘，避免污染每个因子 workspace。
+        try:
+            if local_path and process.returncode not in (0, None):
+                _dbg = Path(local_path) / "localenv_debug.log"
+                _dbg.write_text(combined_output, encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
         if killed:
             combined_output += (
