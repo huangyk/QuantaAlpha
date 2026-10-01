@@ -181,6 +181,29 @@ async def _broadcast(task_id: str, message: Dict[str, Any]):
 
 # ========================== Mining Process ==========================
 
+def _create_qlib_data_link(link: Path, target: str) -> None:
+    """Make ``link`` resolve to ``target`` (a qlib dataset directory).
+
+    Prefers a Windows directory junction (``mklink /J``) which works without
+    admin rights or Developer Mode. Falls back to ``os.symlink`` (needs
+    Dev-mode/admin) only if the junction creation fails.
+    """
+    # Junction first (no privilege required on Windows for local targets).
+    r = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), target],
+        capture_output=True,
+        # mklink prints localized (GBK) text on Chinese Windows; decode defensively
+        # so a non-UTF-8 byte never kills the reader thread.
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if r.returncode == 0:
+        return
+    # Fallback: real directory symlink (requires Dev-mode or admin).
+    link.symlink_to(target, target_is_directory=True)
+
+
 async def _run_mining(task_id: str, req: MiningStartRequest):
     """
     Launch the actual QuantaAlpha mining experiment as a subprocess
@@ -193,6 +216,26 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         # Load .env into env
         dotenv = _load_dotenv_dict()
         env.update(dotenv)
+
+        # Ensure CONDA_DEFAULT_ENV is a non-empty string.
+        # The mining pipeline builds LocalEnv(CondaConf(conda_env_name=os.environ.get("CONDA_DEFAULT_ENV"))),
+        # and CondaConf requires a str — when the backend is launched by absolute python
+        # path instead of `conda activate`, this var is unset/None and EVERY evolution task
+        # dies instantly with: ValidationError: 1 validation error for CondaConf (string_type).
+        # Derive it from sys.executable (.../envs/<name>/python.exe) with a sane fallback.
+        if not env.get("CONDA_DEFAULT_ENV"):
+            _conda_env = ""
+            try:
+                _parts = Path(sys.executable or "").parts
+                if "envs" in _parts:
+                    _idx = _parts.index("envs")
+                    if _idx + 1 < len(_parts):
+                        _conda_env = _parts[_idx + 1]
+            except Exception:
+                _conda_env = ""
+            if not _conda_env:
+                _conda_env = dotenv.get("CONDA_DEFAULT_ENV", "quantaalpha")
+            env["CONDA_DEFAULT_ENV"] = _conda_env
 
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -213,16 +256,38 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         os.makedirs(env["WORKSPACE_PATH"], exist_ok=True)
         os.makedirs(env["PICKLE_CACHE_FOLDER_PATH_STR"], exist_ok=True)
 
-        # Qlib symlink
+        # Qlib data redirect: make ~/.qlib/qlib_data/cn_data resolve to QLIB_DATA_DIR.
+        # The mining pipeline hardcodes provider_uri=~/.qlib/qlib_data/cn_data, so this
+        # path must point at the configured real dataset. We use a Windows directory
+        # junction (mklink /J, no admin/Dev-mode needed). If cn_data is already a real
+        # directory, back it up (rename = recoverable) instead of deleting, then junction.
+        # Any failure degrades to a warning so mining can still run on existing cn_data.
         qlib_data = dotenv.get("QLIB_DATA_DIR", "")
-        if qlib_data:
+        if qlib_data and os.path.isdir(qlib_data):
             qlib_symlink_dir = Path.home() / ".qlib" / "qlib_data"
             qlib_symlink_dir.mkdir(parents=True, exist_ok=True)
             cn_data_link = qlib_symlink_dir / "cn_data"
-            if not cn_data_link.exists() or os.readlink(str(cn_data_link)) != qlib_data:
-                if cn_data_link.is_symlink():
-                    cn_data_link.unlink()
-                cn_data_link.symlink_to(qlib_data)
+            try:
+                _current_target = None
+                try:
+                    _current_target = os.readlink(str(cn_data_link))
+                except OSError:
+                    _current_target = None
+                if _current_target is not None:
+                    # existing reparse point (symlink/junction)
+                    if _current_target != qlib_data:
+                        cn_data_link.unlink()
+                        _create_qlib_data_link(cn_data_link, qlib_data)
+                elif cn_data_link.exists():
+                    # real directory: back it up (rename, recoverable) then junction
+                    _bak = qlib_symlink_dir / f"cn_data.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    print(f"[mining] cn_data is a real directory; backing up to {_bak} then junctioning to {qlib_data}")
+                    cn_data_link.rename(_bak)
+                    _create_qlib_data_link(cn_data_link, qlib_data)
+                else:
+                    _create_qlib_data_link(cn_data_link, qlib_data)
+            except Exception as _e:
+                print(f"[mining] WARNING: cn_data redirect failed ({_e}); mining will use existing cn_data if present")
 
         # Build a temporary config with frontend parameter overrides
         base_config_path = PROJECT_ROOT / "configs" / "experiment.yaml"

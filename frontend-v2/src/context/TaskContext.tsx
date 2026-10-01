@@ -94,28 +94,21 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const miningPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const miningDataPointsRef = useRef(0);
 
-  // Chart data helper
-  const pushMiningDataPoint = useCallback(() => {
-    miningDataPointsRef.current += 1;
-    const n = miningDataPointsRef.current;
-    const startDate = new Date('2020-01-01');
-    const d = new Date(startDate);
-    d.setDate(d.getDate() + n * 7);
-    const dateStr = d.toISOString().split('T')[0];
-
-    setMiningEquityCurve((prev) => [
-      ...prev,
-      { date: dateStr, value: 1 + n * 0.003 + (Math.random() - 0.5) * 0.02 },
-    ]);
-    setMiningDrawdownCurve((prev) => [
-      ...prev,
-      { date: dateStr, value: -0.02 - n * 0.001 + (Math.random() - 0.5) * 0.01 },
-    ]);
-    setMiningIcTimeSeries((prev) => [
-      ...prev,
-      { date: dateStr, value: 0.05 + Math.sin(n * 0.1) * 0.02 + (Math.random() - 0.5) * 0.01 },
-    ]);
-  }, []);
+  // Chart data helper — 铁律：曲线数据只来自后端真实 metrics，前端绝不编造（不准造数据）。
+  // LiveCharts 当前仅渲染指标卡+日志，不渲染 equityCurve/drawdownCurve；
+  // 若后续要画真实曲线，应由后端在 metrics WS 中推送真实时序点（此处仅接受真实值，无值不注入）。
+  const pushMiningDataPoint = useCallback(
+    (real?: { date: string; equity?: number; drawdown?: number; ic?: number }) => {
+      if (!real) return; // 无真实数据则不注入任何点（杜绝 Math.random 编造）
+      if (real.equity !== undefined)
+        setMiningEquityCurve((prev) => [...prev, { date: real.date, value: real.equity! }]);
+      if (real.drawdown !== undefined)
+        setMiningDrawdownCurve((prev) => [...prev, { date: real.date, value: real.drawdown! }]);
+      if (real.ic !== undefined)
+        setMiningIcTimeSeries((prev) => [...prev, { date: real.date, value: real.ic! }]);
+    },
+    [],
+  );
 
   // WS handler for mining
   const handleMiningWsMessage = useCallback(

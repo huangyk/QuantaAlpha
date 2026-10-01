@@ -8,14 +8,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # =============================================================================
-# 检查 Node.js
+# 检查 Node.js —— 优先使用本机 nvm 管理的 node
+# 说明：本机 node 由 nvm（Windows nvm4w）管理，路径 D:\nvm4w\nodejs。
+#       不要使用 WorkBuddy 托管 node（其目录曾被锁导致 npm install 的 EBUSY）。
+#       把 nvm 目录前置到 PATH，使 node 与 npm 均来自同一版本。
 # =============================================================================
-if ! command -v node &> /dev/null; then
+NVM_NODE_DIR="${NVM_NODE_DIR:-D:/nvm4w/nodejs}"
+if [ -x "${NVM_NODE_DIR}/node.exe" ]; then
+    export PATH="${NVM_NODE_DIR}:${PATH}"
+    echo "✅ Node.js (nvm): $("${NVM_NODE_DIR}/node.exe" --version)  ← ${NVM_NODE_DIR}"
+elif command -v node &> /dev/null; then
+    echo "⚠️  Node.js (PATH): $(node --version)  — 未找到 nvm node，回退系统 node"
+else
     echo "❌ 错误: 未找到 Node.js"
-    echo "请先安装 Node.js: https://nodejs.org/"
+    echo "请先安装 Node.js（建议 nvm）: https://nodejs.org/"
     exit 1
 fi
-echo "✅ Node.js: $(node --version)"
 
 # =============================================================================
 # 激活 conda 环境（使用与主实验相同的 quantaalpha 环境）

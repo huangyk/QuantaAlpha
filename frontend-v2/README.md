@@ -70,6 +70,18 @@ npm install
 npm run dev
 ```
 
+### 环境要求（重要）
+- **Node.js**：必须使用本机 **nvm（nvm4w）管理的 node** —— `D:\nvm4w\nodejs\node.exe`（v24.9.0，`npm` 在同目录）。
+  请勿使用 WorkBuddy 托管 node：其目录曾被占用，导致 `npm install` 在 esbuild postinstall 阶段报 `EBUSY`。
+  `start.sh` 会自动把该目录前置到 `PATH`，使 `node` / `npm` 都来自 nvm；
+  若 nvm 装在别处，启动时设置 `NVM_NODE_DIR=/path/to/nodejs` 即可。
+- **Python**：conda 环境 `quantaalpha`（需含 `fastapi` / `uvicorn` 及已安装的 `quantaalpha` 包）。
+
+### 启动顺序
+1. **后端**（FastAPI，端口 **8000**）：`python backend/app.py`；`start.sh` 会先探测 8000，已提供服务则复用。
+2. **前端**（Vite，端口 **3000**）：`npm run dev`；通过 Vite proxy 把 `/api` 转发到 8000。
+3. 打开 http://localhost:3000 ；后端 API 文档 http://localhost:8000/docs
+
 ### 访问
 - 🌐 **前端**: http://localhost:3000
 - 🔧 **API 文档**: http://localhost:8000/docs
