@@ -16,23 +16,28 @@ from quantaalpha.log import logger
 
 def generate_data_folder_from_qlib(use_local: bool = True):
     template_path = Path(__file__).parent / "data_template"
-    qtde = QTDockerEnv(is_local=use_local)
-    qtde.prepare()
-    
-    # Use current Python so subprocess finds installed packages (e.g. qlib)
-    python_exe = sys.executable
-    logger.info(f"Generating factor data in {'local' if use_local else 'Docker'}")
-    execute_log = qtde.run(
-        local_path=str(template_path),
-        entry=f'{python_exe} generate.py',
-    )
+    daily_pv_all = template_path / "daily_pv_all.h5"
+    daily_pv_debug = template_path / "daily_pv_debug.h5"
 
-    # Check that file was generated
-    daily_pv_all = Path(__file__).parent / "data_template" / "daily_pv_all.h5"
-    daily_pv_debug = Path(__file__).parent / "data_template" / "daily_pv_debug.h5"
-    
-    assert daily_pv_all.exists(), "daily_pv_all.h5 is not generated."
-    assert daily_pv_debug.exists(), "daily_pv_debug.h5 is not generated."
+    # Windows/本机：h5 已预生成时直接跳过全市场 D.features（该步在 Windows 上极慢/卡死）。
+    # 只有 h5 缺失时才真正走 qlib 生成（Docker 或 Linux 主机）。
+    if daily_pv_all.exists() and daily_pv_debug.exists():
+        logger.info("Factor source data (daily_pv_all/debug.h5) already present; skipping qlib generation")
+    else:
+        qtde = QTDockerEnv(is_local=use_local)
+        qtde.prepare()
+
+        # Use current Python so subprocess finds installed packages (e.g. qlib)
+        python_exe = sys.executable
+        logger.info(f"Generating factor data in {'local' if use_local else 'Docker'}")
+        qtde.run(
+            local_path=str(template_path),
+            entry=f'{python_exe} generate.py',
+        )
+
+        # Check that file was generated
+        assert daily_pv_all.exists(), "daily_pv_all.h5 is not generated."
+        assert daily_pv_debug.exists(), "daily_pv_debug.h5 is not generated."
 
     # Create data dir and copy files
     logger.info("Copying generated data files to workspace")

@@ -1,3 +1,4 @@
+import sys
 from typing import Optional
 
 from quantaalpha.coder.costeer.config import CoSTEERSettings
@@ -22,8 +23,8 @@ class FactorCoSTEERSettings(CoSTEERSettings):
     select_method: str = "random"
     """Method for the selection of factors implementation"""
 
-    python_bin: str = "python"
-    """Path to the Python binary"""
+    python_bin: str = sys.executable
+    """Path to the Python binary (default to current interpreter, which has pandas/qlib)."""
     
     factor_zoo_path: Optional[str] = None
     """Path to the CSV file containing the factor zoo database (e.g., Alpha101 factors).

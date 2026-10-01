@@ -36,6 +36,15 @@ from quantaalpha.log import logger
 from quantaalpha.log.time import measure_time
 from quantaalpha.llm.config import LLM_SETTINGS
 
+# Windows 兼容补丁：rdagent LocalEnv 在 Windows 下用 select.poll / /bin/sh，本机不可用。
+# 运行时 monkey-patch，不改动 site-packages 源码；仅 Windows 生效，非 Windows 静默跳过。
+try:
+    from quantaalpha.pipeline.patches.rdagent_windows_localenv import patch_localenv_for_windows
+    patch_localenv_for_windows()
+except Exception as _patch_err:  # 补丁失败不应阻断挖掘
+    import logging as _logging
+    _logging.getLogger("quantaalpha").warning(f"Windows LocalEnv 补丁未生效: {_patch_err}")
+
 
 
 
