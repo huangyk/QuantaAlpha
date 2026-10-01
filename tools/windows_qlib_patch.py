@@ -71,7 +71,16 @@ def _wrap_entry(entry: str) -> str:
         return f'"{python_bin}" {rest}'
     if text.startswith("qrun "):
         rest = text[len("qrun ") :]
-        return f'"{qrun_bin}" {rest}'
+        # The packaged qrun.exe launcher on Windows loads rd-agent's qlib and
+        # crashes (exit 127) at the SigAnaRecord/PortAnaRecord step. Invoke
+        # quantaalpha's own qlib directly via `python -m qlib.cli.run`, which
+        # runs the identical workflow and produces the mlflow recorder expected
+        # by read_exp_res_fixed.py. Validated end-to-end (Rank IC ~0.06).
+        # Prefer quantaalpha's python explicitly so the backtest cannot regress
+        # to rd-agent's qlib if CONDA_DEFAULT_ENV is unset.
+        qa_py = _MINICONDA / "envs" / "quantaalpha" / "python.exe"
+        qlib_python = str(qa_py) if qa_py.exists() else str(python_bin)
+        return f'"{qlib_python}" -m qlib.cli.run {rest}'
     return f'conda run -n {conda_env} --no-capture-output {text}'
 
 
