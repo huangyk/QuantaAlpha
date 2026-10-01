@@ -286,6 +286,20 @@ def _windows_localenv_run(
         if entry is None:
             entry = self.conf.default_entry
 
+        # --- qrun 翻译（Windows 关键修复） ---
+        # rdagent 的 QlibFBWorkspace.execute() 传 entry="qrun conf_xxx.yaml"。
+        # 若直接交给 shell，会命中 PATH 里 quantaalpha\Scripts\qrun.exe —— 这个
+        # pyinstaller 启动器内部加载的是 rd-agent 环境的 qlib，在
+        # SigAnaRecord/PortAnaRecord 阶段退出码 127 直接崩（mlflow recorder FAILED，
+        # read_exp_res.py 读不到结果 -> "No result file found" -> Backtesting result
+        # is None -> 0 有效因子）。
+        # 改为用当前 quantaalpha 的 python 直跑 qlib.cli.run，与手动验证一致
+        # （python -m qlib.cli.run conf_combined_factors.yaml 退出 0、FINISHED、
+        # Rank IC ~0.06）。
+        if os.name == "nt" and isinstance(entry, str) and entry.strip().startswith("qrun "):
+            rest = entry.strip()[len("qrun ") :]
+            entry = f'"{sys.executable}" -m qlib.cli.run {rest}'
+
         if Console is not None:
             Console().print(Rule("[bold green]LocalEnv Logs Begin (win-patched)[/bold green]", style="dark_orange"))
             table = Table(title="Run Info", show_header=False)
