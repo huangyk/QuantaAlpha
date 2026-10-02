@@ -335,7 +335,13 @@ def main() -> int:
     logger.info("factor shape=%s（成功复算 %d/%d）", f_df.shape, len(ok_names), len(exprs))
 
     # ---- 前瞻收益 ----
-    fwd_expr = f"Ref($close, -{args.horizon}) / $close - 1"
+    # 必须与平台口径一致：configs/backtest.yaml 的 dataset.label 就是
+    #   Ref($close, -2) / Ref($close, -1) - 1
+    # 语义是「t 日收盘出信号、t+1 才成交」，所以 t 日信号要对应 t+1 -> t+2 的收益。
+    # 若退化成 Ref($close,-h)/$close-1（让 t 日信号直接赚 t->t+1 的钱），
+    # 实测会把 RankIC 抬高约 60%（同一因子 0.0174 vs 0.0281），且对短周期因子
+    # 会放大到符号反转，复验结论完全不可比。
+    fwd_expr = f"Ref($close, -{args.horizon + 1}) / Ref($close, -{args.horizon}) - 1"
     fwd = D.features(codes, [fwd_expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
     fwd.name = "fwd"
     logger.info("fwd shape=%s", fwd.shape)
