@@ -381,7 +381,15 @@ def run_evolution_loop(
     for i, d in enumerate(directions):
         logger.info(f"  Direction {i}: {d}")
 
-    pool_save_path = Path(log_root) / "trajectory_pool.json"
+    # 轨迹池落盘路径：默认放在本次 trace 目录；若 yaml 里指定了
+    # evolution.pool_path，则固定用该路径（便于中断后重启时继承已有演化池）
+    _configured_pool_path = evolution_cfg.get("pool_path")
+    if _configured_pool_path:
+        pool_save_path = Path(os.path.expanduser(str(_configured_pool_path)))
+    else:
+        pool_save_path = Path(log_root) / "trajectory_pool.json"
+    if pool_save_path.parent and not pool_save_path.parent.exists():
+        pool_save_path.parent.mkdir(parents=True, exist_ok=True)
     mutation_prompt_path = Path(__file__).parent / "prompts" / "evolution_prompts.yaml"
     
     logger.info(f"Trajectory pool path: {pool_save_path} (fresh_start={fresh_start})")

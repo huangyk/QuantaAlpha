@@ -1,0 +1,77 @@
+# ============================================================
+# QuantaAlpha SMOKE run configuration
+# 目的：单方向、单轮、无演化，验证 数据→LLM→回测→反馈 全链路可用 + 测单轮耗时。
+# 用法：
+#   python -m quantaalpha.cli mine --direction "<方向>" --config_path configs/experiment_smoke.yaml
+# ============================================================
+
+planning:
+  enabled: false
+  num_directions: 1
+  max_attempts: 5
+  use_llm: true
+  allow_fallback: true
+  prompt_file: planning_prompts.yaml
+
+execution:
+  max_loops: 1
+  steps_per_loop: 5
+  step_n: null
+  use_local: true
+  parallel_execution: false
+  branch_log_root: log
+  branch_log_prefix: branch
+
+evolution:
+  enabled: false
+  mutation_enabled: false
+  crossover_enabled: false
+  max_rounds: 1
+  crossover_size: 2
+  crossover_n: 2
+  parallel_enabled: false
+  prefer_diverse_crossover: true
+  prompt_file: evolution_prompts.yaml
+  parent_selection_strategy: best
+  top_percent_threshold: 0.3
+  fresh_start: true
+  cleanup_on_finish: false
+
+quality_gate:
+  consistency_enabled: false
+  complexity_enabled: true
+  redundancy_enabled: true
+  consistency_strict_mode: false
+  max_correction_attempts: 3
+
+factor:
+  factors_per_hypothesis: 1
+  complexity:
+    symbol_length_threshold: 200
+    base_features_threshold: 5
+    free_args_ratio_threshold: 0.5
+  duplication:
+    enabled: true
+    threshold: 5
+    factor_zoo_path: null
+
+backtest:
+  use_docker: false
+  timeout: 800
+  qlib:
+    config_name: conf_baseline.yaml
+
+llm:
+  factor_mining_timeout: 999999
+  max_retries: 3
+  retry_delay: 1.0
+  json_mode_strict: true
+
+logging:
+  level: INFO
+  save_snapshots: true
+  save_trajectory_pool: true
+
+prompts:
+  planning: planning_prompts.yaml
+  evolution: evolution_prompts.yaml

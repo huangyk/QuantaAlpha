@@ -1,0 +1,123 @@
+# ============================================================
+# QuantaAlpha 续跑配置（继承上一轮演化池，继续深挖 RankIC）
+# 相对 configs/experiment.yaml 的差异：
+#   planning.num_directions 2 -> 3   （更多并行探索方向）
+#   evolution.max_rounds    3 -> 5   （更长的演化链）
+#   evolution.fresh_start   true->false + pool_path（继承上一轮 7 条轨迹）
+#   evolution.crossover_n   2 -> 2    （保持，控制单轮并行度）
+# ============================================================
+
+# ============================================================
+# PLANNING CONFIGURATION
+# ============================================================
+planning:
+  enabled: true
+  num_directions: 3
+  max_attempts: 5
+  use_llm: true
+  allow_fallback: true
+  prompt_file: planning_prompts.yaml
+
+
+# ============================================================
+# EXECUTION CONFIGURATION
+# ============================================================
+execution:
+  max_loops: 2
+  steps_per_loop: 5
+  step_n: null
+  use_local: true
+  parallel_execution: false
+  branch_log_root: log
+  branch_log_prefix: branch
+
+
+# ============================================================
+# EVOLUTION CONFIGURATION
+# ============================================================
+evolution:
+  enabled: true
+  mutation_enabled: true
+  crossover_enabled: true
+
+  # 续跑：max_rounds 继续往上推（round 0 已是继承进来的 original 成果）
+  max_rounds: 5
+
+  crossover_size: 2
+  crossover_n: 2
+
+  parallel_enabled: false
+  prefer_diverse_crossover: true
+  prompt_file: evolution_prompts.yaml
+
+  parent_selection_strategy: best
+  top_percent_threshold: 0.3
+
+  # 继承上一轮轨迹池（重要：fresh_start=false 且 pool_path 存在时会被加载）
+  pool_path: "log/latest_trajectory_pool.json"
+  fresh_start: false
+
+  cleanup_on_finish: false
+
+
+# ============================================================
+# QUALITY GATE CONFIGURATION
+# ============================================================
+quality_gate:
+  consistency_enabled: false
+  complexity_enabled: true
+  redundancy_enabled: true
+  consistency_strict_mode: false
+  max_correction_attempts: 3
+
+
+# ============================================================
+# FACTOR GENERATION CONFIGURATION
+# ============================================================
+factor:
+  factors_per_hypothesis: 1
+  complexity:
+    symbol_length_threshold: 200
+    base_features_threshold: 5
+    free_args_ratio_threshold: 0.5
+  duplication:
+    enabled: true
+    threshold: 5
+    factor_zoo_path: null
+
+
+# ============================================================
+# BACKTEST CONFIGURATION
+# ============================================================
+backtest:
+  use_docker: false
+  timeout: 800
+  qlib:
+    config_name: conf_baseline.yaml
+
+
+# ============================================================
+# LLM CONFIGURATION
+# ============================================================
+llm:
+  factor_mining_timeout: 999999
+  max_retries: 3
+  retry_delay: 1.0
+  json_mode_strict: true
+
+
+# ============================================================
+# LOGGING CONFIGURATION
+# ============================================================
+logging:
+  level: INFO
+  save_snapshots: true
+  save_trajectory_pool: true
+
+
+# ============================================================
+# PROMPT FILES CONFIGURATION
+# ============================================================
+prompts:
+  planning: planning_prompts.yaml
+  evolution: evolution_prompts.yaml
