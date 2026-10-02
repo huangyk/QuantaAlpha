@@ -1,0 +1,140 @@
+######################################################################
+# 分钟级（5min）回测配置 —— 供 BacktestRunner 使用
+#
+# 数据源：quant_datahub 从 QMT 采集入库后导出的 Qlib 数据集
+#   D:/qqmt/qlib_data/cn_5m_full
+#   日历 2026-01-05 09:35 ~ 2026-09-30 15:00（8688 根 5 分钟 K 线）
+#   生成：python -m datahub dump-qlib --period 5m --out D:/qqmt/qlib_data/cn_5m_full
+#   标的池：python -m datahub liquid-instruments --out D:/qqmt/qlib_data/cn_5m_full --top 500
+#
+# 与日频 configs/backtest.yaml 的关键差异：
+#   1. data.freq: 5min —— BacktestRunner 原先全程硬编码 freq='day'，
+#      现已改为从配置解析（data.freq > qlib_init.freq > data_loader.kwargs.freq）。
+#   2. market: liquid500 —— 全市场 5364 只 × 8688 根 ≈ 4600 万行，
+#      LightGBM + 回测内存/耗时不可控，先用流动性 Top500（≈430 万行）。
+#   3. benchmark: SH600000（占位）—— 指数 5 分钟数据在本数据集中只有
+#      2026-08-19 之后一段，覆盖不了完整区间。IC/ICIR/年化/回撤不受影响，
+#      只有「相对基准超额」失真。
+#
+# 用法：
+#   QLIB_DATA_DIR=D:/qqmt/qlib_data/cn_5m_full \
+#   python -m quantaalpha.cli backtest -c configs/backtest_5min.yaml --factor-source alpha158_20
+######################################################################
+
+random_seed: 42
+
+experiment:
+  name: "backtest_5min"
+  recorder: "backtest_5min_recorder"
+  output_dir: "data/results/backtest_5min_results"
+  output_metrics_file: "backtest_metrics.json"
+
+factor_source:
+  type: "alpha158_20"
+  custom:
+    json_files: []
+    quality_filter: null
+    max_factors: null
+    use_llm_for_incompatible: true
+  combined:
+    official_source: "alpha158_20"
+    include_custom: true
+
+data:
+  provider_uri: "D:/qqmt/qlib_data/cn_5m_full"
+  region: "cn"
+  freq: "5min"
+  market: "liquid500"
+  start_time: "2026-01-05"
+  end_time: "2026-09-30"
+
+dataset:
+  # 下一根 5 分钟 K 线收益。噪声大，可按需拉长：
+  #   1 小时(12 根): Ref($close, -13) / Ref($close, -1) - 1
+  #   次日同刻(48根): Ref($close, -49) / Ref($close, -1) - 1
+  label: "Ref($close, -2) / Ref($close, -1) - 1"
+
+  learn_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "DropnaLabel"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+
+  infer_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+
+  segments:
+    train: ["2026-01-05", "2026-05-31"]
+    valid: ["2026-06-01", "2026-07-31"]
+    test:  ["2026-08-01", "2026-09-30"]
+
+model:
+  type: "lgb"
+  params:
+    loss: "mse"
+    learning_rate: 0.05
+    max_depth: 8
+    num_leaves: 210
+    colsample_bytree: 0.8879
+    subsample: 0.8789
+    lambda_l1: 205.6999
+    lambda_l2: 580.9768
+    num_threads: 20
+    seed: 42
+    random_state: 42
+    early_stopping_round: 50
+    num_boost_round: 300
+    min_child_samples: 200
+    feature_fraction_bynode: 0.8
+
+backtest:
+  strategy:
+    class: "TopkDropoutStrategy"
+    module_path: "qlib.contrib.strategy"
+    kwargs:
+      signal: "<PRED>"
+      topk: 30
+      n_drop: 3
+
+  backtest:
+    start_time: "2026-08-01"
+    end_time: "2026-09-30"
+    account: 100000000
+    benchmark: "SH600000"
+    exchange_kwargs:
+      limit_threshold: 0.095
+      deal_price: "open"
+      open_cost: 0.0005
+      close_cost: 0.0015
+      min_cost: 5
+
+llm:
+  enabled: true
+  timeout: 300
+  max_retries: 3
+  cache_results: true
+  cache_dir: "data/results/factor_cache"
+  auto_extract_cache: false
+  debug: false
+
+factor_calculation:
+  output_dir: "data/results/computed_factors"
+  save_intermediate: true
+  n_jobs: 4
+  data_file: null

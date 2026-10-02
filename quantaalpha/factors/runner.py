@@ -162,7 +162,10 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
 
 
         # Run backtest (local or Docker). Config name must match factor_template files (e.g. conf_baseline.yaml).
-        config_name = "conf_baseline.yaml" if len(exp.based_experiments) == 0 else "conf_combined_factors.yaml"
+        # 分钟级挖掘时用 QUANTAALPHA_BACKTEST_CONF=conf_baseline_5min.yaml 切换（默认仍是日频）。
+        config_name = os.environ.get("QUANTAALPHA_BACKTEST_CONF") or (
+            "conf_baseline.yaml" if len(exp.based_experiments) == 0 else "conf_combined_factors.yaml"
+        )
         logger.info(f"Execute factor backtest (Use {'Local' if use_local else 'Docker container'}): {config_name}")
         
         # Ensure workspace and config are ready (execute() does not call before_execute()).

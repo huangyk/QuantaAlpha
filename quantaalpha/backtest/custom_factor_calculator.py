@@ -573,6 +573,8 @@ def get_qlib_stock_data(config: Dict) -> pd.DataFrame:
     start_time = data_config.get('start_time', '2016-01-01')
     end_time = data_config.get('end_time', '2025-12-31')
     market = data_config.get('market', 'csi300')
+    # 频率由 runner 写入 config['data']['freq']（默认 day），支持 5min / 1min
+    freq = data_config.get('freq', 'day')
     
     stock_list = D.instruments(market)
     
@@ -582,7 +584,7 @@ def get_qlib_stock_data(config: Dict) -> pd.DataFrame:
         fields,
         start_time=start_time,
         end_time=end_time,
-        freq='day'
+        freq=freq
     )
     
     df.columns = fields

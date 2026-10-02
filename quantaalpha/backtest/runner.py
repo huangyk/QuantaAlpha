@@ -6,6 +6,7 @@ Modes: official (Qlib DataLoader) or custom (expr_parser + function_lib).
 
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,38 @@ class BacktestRunner:
         self.config_path = Path(config_path)
         self.config = self._load_config()
         self._qlib_initialized = False
+        # 数据频率（day / 5min / 1min）。原来全部硬编码为 'day'，
+        # 分钟级数据集跑不起来；改成从配置读，默认仍是 day，日频流程行为不变。
+        self.freq = self._resolve_freq()
+        # 同步给自定义因子计算器（它从 config['data'] 读参数）
+        self.config.setdefault('data', {})['freq'] = self.freq
+        self.ann_scaler = self._resolve_ann_scaler()
+        logger.info(f"Backtest freq: {self.freq} (ann_scaler={self.ann_scaler})")
+
+    # 每年 bar 数：日频 252；5 分钟 252*48；1 分钟 252*240
+    _BARS_PER_YEAR = {"day": 252, "5min": 252 * 48, "1min": 252 * 240}
+
+    def _resolve_ann_scaler(self) -> int:
+        """年化系数：配置里可显式给 ann_scaler，否则按频率折算。"""
+        for section in ("backtest", "data", "qlib_init", ""):
+            src = self.config.get(section, self.config) if section else self.config
+            if isinstance(src, dict) and src.get("ann_scaler"):
+                return int(src["ann_scaler"])
+        return int(self._BARS_PER_YEAR.get(self.freq, 252))
+
+    def _resolve_freq(self) -> str:
+        """解析数据集频率，优先级：data.freq > qlib_init.freq > data_loader.kwargs.freq > 'day'。
+
+        三种写法分别对应：configs/backtest.yaml 风格（data 段）、
+        conf_baseline.yaml 风格（qlib_init 段或 data_loader 构造参数）。
+        """
+        freq = (self.config.get('data') or {}).get('freq')
+        if not freq:
+            freq = (self.config.get('qlib_init') or {}).get('freq')
+        if not freq:
+            loader = ((self.config.get('data_handler_config') or {}).get('data_loader') or {})
+            freq = (loader.get('kwargs') or {}).get('freq')
+        return freq or 'day'
 
     def _load_config(self) -> Dict:
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -182,6 +215,9 @@ class BacktestRunner:
                 'class': 'QlibDataLoader',
                 'module_path': 'qlib.contrib.data.loader',
                 'kwargs': {
+                    # 频率必须显式传入：QlibDataLoader 默认 freq='day'，
+                    # 在分钟数据集上会去读 calendars/day.txt 导致取不到数据。
+                    'freq': self.freq,
                     'config': {
                         'feature': (expressions, names),
                         'label': ([dataset_config['label']], ['LABEL0'])
@@ -441,7 +477,7 @@ class BacktestRunner:
             [label_expr],
             start_time=data_config['start_time'],
             end_time=data_config['end_time'],
-            freq='day'
+            freq=self.freq
         )
         
         label_df.columns = ['LABEL0']
@@ -467,7 +503,7 @@ class BacktestRunner:
                 expressions,
                 start_time=data_config['start_time'],
                 end_time=data_config['end_time'],
-                freq='day'
+                freq=self.freq
             )
             
             df.columns = names
@@ -488,7 +524,18 @@ class BacktestRunner:
         model_config = self.config['model']
         backtest_config = self.config['backtest']['backtest']
         strategy_config = self.config['backtest']['strategy']
-        
+
+        # 重定向 mlflow 跟踪目录到可写路径，规避默认 ./mlruns 在部分环境下
+        # 因残留 run / 权限导致写 tags/mlflow.runName 抛 PermissionError。
+        import mlflow as _mlflow
+        _mluri = os.environ.get("MLFLOW_TRACKING_URI") or str(project_root / "data" / "mlruns")
+        os.makedirs(_mluri, exist_ok=True)
+        try:
+            _mlflow.set_tracking_uri(_mluri)
+            logger.info("mlflow tracking uri = %s", _mlflow.get_tracking_uri())
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("设置 mlflow tracking uri 失败（忽略）: %s", _e)
+
         metrics = {}
         
         with R.start(experiment_name=exp_name, recorder_name=rec_name):
@@ -513,7 +560,7 @@ class BacktestRunner:
             
             # Compute IC metrics
             try:
-                sar = SigAnaRecord(recorder=R.get_recorder(), ana_long_short=False, ann_scaler=252)
+                sar = SigAnaRecord(recorder=R.get_recorder(), ana_long_short=False, ann_scaler=self.ann_scaler)
                 sar.generate()
                 
                 recorder = R.get_recorder()
@@ -557,7 +604,7 @@ class BacktestRunner:
                         ['$close'],
                         start_time=backtest_config['start_time'],
                         end_time=backtest_config['end_time'],
-                        freq='day'
+                        freq=self.freq
                     )
                     invalid_mask = (price_data['$close'] == 0) | (price_data['$close'].isna())
                     invalid_count = invalid_mask.sum()
@@ -587,7 +634,10 @@ class BacktestRunner:
                         "class": "SimulatorExecutor",
                         "module_path": "qlib.backtest.executor",
                         "kwargs": {
-                            "time_per_step": "day",
+                            # 原来硬编码 "day"：分钟数据集没有 day 日历，
+                            # 账户报告会退化到去找 1min 日历并抛
+                            # "can't find a freq ... that can resample to 1min"。
+                            "time_per_step": self.freq,
                             "generate_portfolio_metrics": True,
                             "verbose": False,
                             "indicator_config": {"show_indicator": False}
@@ -614,8 +664,18 @@ class BacktestRunner:
                 
                 print(f"  Portfolio backtest done ({time.time()-bt_start:.1f}s)")
                 # Extract portfolio metrics
-                if portfolio_metric_dict and "1day" in portfolio_metric_dict:
-                    report_df, positions_df = portfolio_metric_dict["1day"]
+                # 报告的 key 是回测频率（日频是 "1day"，分钟频是 freq 本身），
+                # 原来只认 "1day"，分钟级回测会取不到结果。
+                pm_key = None
+                if isinstance(portfolio_metric_dict, dict) and portfolio_metric_dict:
+                    for candidate in (self.freq, "1day", "5min", "1min"):
+                        if candidate in portfolio_metric_dict:
+                            pm_key = candidate
+                            break
+                    if pm_key is None:
+                        pm_key = next(iter(portfolio_metric_dict))
+                if pm_key:
+                    report_df, positions_df = portfolio_metric_dict[pm_key]
                     
                     if isinstance(report_df, pd.DataFrame) and 'return' in report_df.columns:
                         portfolio_return = report_df['return'].replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -645,7 +705,9 @@ class BacktestRunner:
                             except Exception as csv_err:
                                 logger.warning(f"Failed to save daily CSV: {csv_err}")
 
-                            analysis = risk_analysis(excess_return_with_cost)
+                            # risk_analysis 只认 day/week/month，分钟级必须显式给 N，
+                            # 否则会按 252 折算，年化收益/IR 严重失真。
+                            analysis = risk_analysis(excess_return_with_cost, N=self.ann_scaler)
                             
                             if isinstance(analysis, pd.DataFrame):
                                 analysis = analysis['risk'] if 'risk' in analysis.columns else analysis.iloc[:, 0]

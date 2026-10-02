@@ -395,7 +395,8 @@ class QlibDataProvider:
             fields,
             start_time=start_time,
             end_time=end_time,
-            freq='day'
+            # 频率由 runner 写入 data_config['freq']（默认 day），支持 5min / 1min
+            freq=self.data_config.get('freq', 'day')
         )
         
         df.columns = fields
