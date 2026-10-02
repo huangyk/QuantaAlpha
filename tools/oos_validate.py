@@ -75,9 +75,42 @@ def _ts_to_camel(name: str) -> str:
     return tail.capitalize()
 
 
+# 实参要能吃一层嵌套括号，否则 TS_ZSCORE(ABS($return), 10) 这类写法会被漏掉，
+# 落到后面的通用归一里变成 qlib 未注册的 Zscore 而被跳过（算不出来，虽安全但白瞎一条因子）。
+_ARG = r"((?:[^()]|\([^()]*\))+?)"
+_ZSCORE_RE = re.compile(rf"\bTS_ZSCORE\s*\(\s*{_ARG}\s*,\s*(\d+)\s*\)", re.I)
+_PCTCHG_RE = re.compile(rf"\bTS_PCTCHANGE\s*\(\s*{_ARG}\s*,\s*(\d+)\s*\)", re.I)
+
+
+def _expand_ts_funcs(expr: str, max_round: int = 3) -> str:
+    """把没有单一对应算子、只能用基础算子组合还原的 TS_* 展开成 qlib 原生表达式。
+
+    目前两类：
+      TS_ZSCORE(x, N)    -> (x - Mean(x, N)) / (Std(x, N) + 1e-8)
+      TS_PCTCHANGE(x, N) -> x / Ref(x, N) - 1
+
+    多轮执行以支持嵌套（如 TS_ZSCORE(ABS($return), 10)）：正则的实参模式
+    [^,()]+ 只吃不含括号的表达式，第一轮替换掉最外层后才轮到内层。
+    """
+    result = expr
+    for _ in range(max_round):
+        new = _ZSCORE_RE.sub(
+            lambda m: f"(({m.group(1)} - Mean({m.group(1)}, {m.group(2)}))"
+                      f" / (Std({m.group(1)}, {m.group(2)}) + 1e-8))",
+            result,
+        )
+        new = _PCTCHG_RE.sub(
+            lambda m: f"({m.group(1)} / Ref({m.group(1)}, {m.group(2)}) - 1)", new
+        )
+        if new == result:
+            break
+        result = new
+    return result
+
+
 def normalize_expr(expr: str) -> str:
     """把平台简写表达式还原成 qlib 原生表达式（口径与挖掘时一致）。"""
-    result = expr
+    result = _expand_ts_funcs(expr)
     for old, new in OP_CONVERSIONS.items():
         result = result.replace(old, new)
     # 通用 TS_* 归一：逐个函数调用位置替换，避免误伤表达式里的普通大写串
@@ -349,20 +382,36 @@ def main() -> int:
     # ---- TopK 组合 + 扣费敏感性 ----
     top_name = summ_df.sort_values("ric_all", ascending=False)["factor"].iloc[0]
     logger.info("组合基准因子: %s", top_name)
+    # gross 必须是「零成本」那一档的年化。
+    # 注意 perf_stats 吃的是 net_ret（已扣费），同一序列无论在哪个 bps 下都已经是净收益，
+    # 若把 st["annualized"] 同时赋给 gross_ann，毛/净两列会恒等、扣费前后的毛收益对比彻底失真。
+    gross_eq = topk_equity_curve(df, top_name, "fwd", args.topk, 0.0, dt_level, ins_level)
+
+    def _seg_stats(eq: pd.DataFrame, seg: str, s: str, e: str) -> dict:
+        q = eq[(eq.index >= pd.Timestamp(s)) & (eq.index <= pd.Timestamp(e))]
+        return {
+            "series": q["net_ret"],
+            "days": len(q),
+            "turnover": float(q["turnover"].mean()) if not q.empty else float("nan"),
+        }
+
+    gross_cache = {seg: _seg_stats(gross_eq, seg, s, e) for seg, s, e in segments}
     sens_rows = []
     for bps in [0.0, 3.0, 5.0, 10.0, 20.0]:
         eq = topk_equity_curve(df, top_name, "fwd", args.topk, bps, dt_level, ins_level)
         for seg, s, e in segments:
-            seg_q = eq[(eq.index >= pd.Timestamp(s)) & (eq.index <= pd.Timestamp(e))]
-            st = perf_stats(seg_q["net_ret"])
+            q = _seg_stats(eq, seg, s, e)
+            st = perf_stats(q["series"])
+            g = gross_cache[seg]
             sens_rows.append(
                 {
                     "cost_bps": bps,
                     "segment": seg,
-                    "days": len(seg_q),
-                    "avg_turnover": float(seg_q["turnover"].mean()) if not seg_q.empty else float("nan"),
-                    "gross_ann": st["annualized"],
+                    "days": q["days"],
+                    "avg_turnover": q["turnover"],
+                    "gross_ann": perf_stats(g["series"])["annualized"],
                     "net_ann": st["annualized"],
+                    "net_minus_gross": st["annualized"] - perf_stats(g["series"])["annualized"],
                     "sharpe": st["sharpe"],
                     "max_drawdown": st["max_drawdown"],
                 }
@@ -385,11 +434,28 @@ def main() -> int:
         if r["ric_train"] and not pd.isna(r["ric_train"]) and r["ric_train"] != 0:
             print(f"  {r['factor']:<45} {r['ric_test']/r['ric_train']:.2f}x")
     print("\n扣费敏感性（基准因子 %s）：" % top_name)
+    order = [0.0, 3.0, 5.0, 10.0, 20.0]
+    print("毛收益（零成本口径）:")
     print(
-        sens_df.pivot_table(index="cost_bps", columns="segment", values="net_ann")
-        .reindex([0.0, 3.0, 5.0, 10.0, 20.0])
+        sens_df.pivot_table(index="cost_bps", columns="segment", values="gross_ann")
+        .reindex(order)
         .to_string(float_format=lambda v: f"{v:.4f}")
     )
+    print("\n净收益:")
+    print(
+        sens_df.pivot_table(index="cost_bps", columns="segment", values="net_ann")
+        .reindex(order)
+        .to_string(float_format=lambda v: f"{v:.4f}")
+    )
+    print("\n成本吃掉的比例 (1 - net/gross):")
+    ratio = pd.DataFrame(
+        {
+            seg: 1 - sens_df[(sens_df.segment == seg)].set_index("cost_bps")["net_ann"]
+            / sens_df[(sens_df.segment == seg)].set_index("cost_bps")["gross_ann"]
+            for seg in ("train", "valid", "test")
+        }
+    ).reindex(order)
+    print(ratio.to_string(float_format=lambda v: f"{v:.3f}"))
     print(f"\n结果已写：{args.out}\n           {sens_path}")
     return 0
 
