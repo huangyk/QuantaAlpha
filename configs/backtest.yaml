@@ -41,7 +41,11 @@ factor_source:
 ######################################################################
 
 data:
-  provider_uri: "~/.qlib/qlib_data/cn_data"
+  # 2026-10-03 更正：这里原本指向 cn_data（2025 单年、仅 226 个交易日，只够 sanity-check）。
+  # runner.py 的取值优先级是 QLIB_DATA_DIR > QLIB_PROVIDER_URI > 本配置，
+  # 一旦哪次跑忘了设 env，就会静默退化到单年池，指标看着能跑其实样本极窄。
+  # 统一指向 cn_real_full（2020-01-02~2026-08-18，全 A ~5210 只）。
+  provider_uri: "C:/Users/lenovo/.qlib/qlib_data/cn_real_full"
   region: "cn"
   # 2026-10-03 更正：原先写 csi300，但本环境 qlib 的 instruments/csi300.txt 只有一行（SH000300
   # 指数本身，31 字节），D.instruments('csi300') 只会返回 1 只票 -> 每天 1 个样本，截面 spearman

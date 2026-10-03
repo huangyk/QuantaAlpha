@@ -1,7 +1,55 @@
 """Auto-applied because Invoke-RDAgent puts tools/ on PYTHONPATH.
 
 Must no-op if rdagent is not installed (e.g. conda env rdagent4qlib inheriting PYTHONPATH).
+
+2026-10-03：顺手压掉一类噪声日志。各 patch 模块在被 import 时会
+`print("[xxx-patch] applied", file=sys.stderr)`，而长任务（mine / 回测）里这些模块会被
+反复加载 —— 实测一次 mine 的日志共 2394 行，其中 **1205 行** 是这种重复提示，把真正
+有用的 direction / hypothesis / RankIC 进度行全挤没了。下面在 import 阶段给 stderr 套一层
+按 tag 去重的过滤器，每个 patch 只留第一条。
 """
+
+import sys
+
+
+class _OnceStderr:
+    """按 tag 去重地放行 stderr 的包装：同一个 patch 标签只放行第一次。"""
+
+    __slots__ = ("_stream", "_seen")
+
+    _KNOWN = (
+        "chat-retry", "cpu-throttle", "factor-datetime", "factor-empty",
+        "feedback-metrics", "final-decision", "gym-numpy", "json-parse",
+        "parquet-read", "qlib-data-profile", "research-prompt", "safe-ic", "ui-metrics",
+    )
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._seen = set()
+
+    def write(self, s):
+        if "-patch]" in s:
+            tag = s.split("-patch]")[0].strip().strip("[]").strip()
+            if tag in self._KNOWN:
+                if tag in self._seen:
+                    return len(s)  # 吞掉重复项
+                self._seen.add(tag)
+        return self._stream.write(s)
+
+    def flush(self):
+        fl = getattr(self._stream, "flush", None)
+        if fl:
+            fl()
+
+    def isatty(self):
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+_real_stderr = sys.stderr
+sys.stderr = _OnceStderr(_real_stderr)
 
 try:
     from chat_retry_patch import apply as apply_chat_retry_patch
@@ -36,3 +84,6 @@ try:
     apply_research_prompt_patch()
 except Exception:
     pass
+finally:
+    # import/apply 阶段结束，立刻还原真 stderr，别影响后续业务输出
+    sys.stderr = _real_stderr
