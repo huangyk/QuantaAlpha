@@ -73,13 +73,24 @@ class BacktestRunner:
             return
         import os
         import qlib
-        provider_uri = (
-            os.environ.get('QLIB_DATA_DIR')
-            or os.environ.get('QLIB_PROVIDER_URI')
-            or self.config['data']['provider_uri']
-        )
+
+        cfg_data = self.config.get('data') or {}
+        # 数据集级 override：配置显式声明 data.force_provider_uri=true 时忽略环境变量。
+        # 必要性：项目 .env 里的 QLIB_DATA_DIR 是"全局默认数据集"（日频 cn_real_full），
+        # 且 env loader 会强制覆盖命令行传进来的同名变量 —— 想跑 5 分钟数据集时，
+        # 在命令行设 QLIB_DATA_DIR 根本不起作用，必须让配置自己说了算。
+        # 同时补上 qlib_init.provider_uri 兜底（原实现只认 data.provider_uri）。
+        if cfg_data.get('force_provider_uri') and cfg_data.get('provider_uri'):
+            provider_uri = cfg_data['provider_uri']
+        else:
+            provider_uri = (
+                os.environ.get('QLIB_DATA_DIR')
+                or os.environ.get('QLIB_PROVIDER_URI')
+                or cfg_data.get('provider_uri')
+                or (self.config.get('qlib_init') or {}).get('provider_uri')
+            )
         provider_uri = os.path.expanduser(provider_uri)
-        region = self.config['data'].get('region', 'cn')
+        region = cfg_data.get('region', 'cn')
         qlib.init(provider_uri=provider_uri, region=region)
         self._qlib_initialized = True
         logger.info(f"Qlib initialized: {provider_uri} (region={region})")
