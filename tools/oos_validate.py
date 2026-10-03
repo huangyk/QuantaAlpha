@@ -463,7 +463,9 @@ def _csrank_postprocess(s: pd.Series, dt_level: int = 0) -> pd.Series:
 
 def unsupported_operators(expr: str, known: set[str]) -> list[str]:
     """找出表达式里 qlib 引擎不认识的算子名（用于提前跳过，避免整批 D.features 崩掉）。"""
-    ops = {m for m in _CALL_RE.findall(expr)} - {"Feature", "PFeature"}
+    # __CSRANK__ 只是截面排名的占位符（后面会平衡剥离），不能算未注册算子，
+    # 否则所有用裸 RANK(...) 的因子都会被判"不可复算"跳过 —— 池子里就有十几个。
+    ops = {m for m in _CALL_RE.findall(expr)} - {"Feature", "PFeature", _CSRANK_MARK}
     return sorted(o for o in ops if o not in known)
 
 
