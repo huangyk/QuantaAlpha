@@ -43,7 +43,11 @@ factor_source:
 data:
   provider_uri: "~/.qlib/qlib_data/cn_data"
   region: "cn"
-  market: "csi300"
+  # 2026-10-03 更正：原先写 csi300，但本环境 qlib 的 instruments/csi300.txt 只有一行（SH000300
+  # 指数本身，31 字节），D.instruments('csi300') 只会返回 1 只票 -> 每天 1 个样本，截面 spearman
+  # 无意义。实测 runner 实际跑出来的是全市场（pred.pkl 覆盖 485 天 × 4336 只）。
+  # 这里改成 all 让配置与事实一致；想用真正的沪深300 成分池，需先把 csi300.txt 换成真实成分股列表。
+  market: "all"
   start_time: "2016-01-01"
   end_time: "2025-12-26"
 
