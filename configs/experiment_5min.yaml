@@ -1,0 +1,88 @@
+# ============================================================
+# QuantaAlpha 分钟级（5min）挖掘配置
+#
+# 与 configs/experiment_cont.yaml 的差异：
+#   backtest.qlib.config_name : conf_baseline.yaml -> conf_5min_nextday.yaml
+#   evolution.fresh_start     : false -> true（全新一轮，不继承日频轨迹池）
+#   evolution.pool_path       : 另存 minute 池，避免和日频池混淆
+#   execution.steps_per_loop  : 5（保持）
+# ============================================================
+
+planning:
+  enabled: true
+  num_directions: 3
+  max_attempts: 5
+  use_llm: true
+  allow_fallback: true
+  prompt_file: planning_prompts.yaml
+
+execution:
+  max_loops: 2
+  steps_per_loop: 5
+  step_n: null
+  use_local: true
+  parallel_execution: false
+  branch_log_root: log
+  branch_log_prefix: branch
+
+evolution:
+  enabled: true
+  mutation_enabled: true
+  crossover_enabled: true
+
+  max_rounds: 5
+
+  crossover_size: 2
+  crossover_n: 2
+
+  parallel_enabled: false
+  prefer_diverse_crossover: true
+  prompt_file: evolution_prompts.yaml
+
+  parent_selection_strategy: best
+  top_percent_threshold: 0.3
+
+  # 分钟级独立轨迹池，不与日频 latest_trajectory_pool.json 混用
+  pool_path: "log/minute_trajectory_pool.json"
+  fresh_start: true
+
+  cleanup_on_finish: false
+
+quality_gate:
+  consistency_enabled: false
+  complexity_enabled: true
+  redundancy_enabled: true
+  consistency_strict_mode: false
+  max_correction_attempts: 3
+
+factor:
+  factors_per_hypothesis: 1
+  complexity:
+    symbol_length_threshold: 200
+    base_features_threshold: 5
+    free_args_ratio_threshold: 0.5
+  duplication:
+    enabled: true
+    threshold: 5
+    factor_zoo_path: null
+
+backtest:
+  use_docker: false
+  timeout: 1800          # 5min 数据量远大于日频，日频的 800s 不够
+  qlib:
+    config_name: conf_5min_nextday.yaml
+
+llm:
+  factor_mining_timeout: 999999
+  max_retries: 3
+  retry_delay: 1.0
+  json_mode_strict: true
+
+logging:
+  level: INFO
+  save_snapshots: true
+  save_trajectory_pool: true
+
+prompts:
+  planning: planning_prompts.yaml
+  evolution: evolution_prompts.yaml

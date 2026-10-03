@@ -1,0 +1,146 @@
+# =============================================================================
+# QuantaAlpha 分钟级（5min）回测配置 ——  T+1 可执行版
+#
+# 基于 conf_baseline_5min.yaml 修改，唯一实质差异是 label：
+#
+#   原版：Ref($close, -2)/Ref($close, -1) - 1
+#         相邻两根 5 分钟 K 线之间的收益 —— 意味着"这一根买、下一根卖"。
+#         **A 股 T+1，当日买入不能当日卖出，这个 label 在实盘不可实现**，
+#         回测净值会系统性高估，只有 IC 类指标还能勉强参考。
+#
+#   本版：Ref($close, -49)/Ref($close, -1) - 1
+#         = 在下一根 bar 买入、持有 48 根 bar（正好一个交易日）后卖出，
+#         即「今天 10:00 买 -> 明天 10:00 卖」，跨过一个完整的 T+1 结算，
+#         **实盘可执行**。48 = A 股每日 5 分钟 K 线根数（4 小时 × 12）。
+#
+# 因此 ann_scaler 从 12096 改回 252：收益周期是一个交易日，不是一根 5 分钟 K 线。
+#
+# 诚实边界（必读，别把回测净值当真）：
+#   1. **相邻样本高度重叠**：每个 5 分钟 bar 都产生一条样本，相邻样本共享 47/48 的
+#      价格路径，样本间不独立。后果是 ICIR / t 统计量会被显著高估，
+#      同一因子在日频数据上的显著性不能直接平移过来。横截面 IC 的方向与相对强弱
+#      仍有参考价值，显著性指标请打折看。
+#   2. **TopkDropoutStrategy 不理解 T+1**：它按 bar 级信号调仓，可能出现
+#      "今天买入、明天 n_drop 掉、后天再卖"之外的组合。净值是近似值。
+#      本轮以 **RankIC / IC 为第一判据**，净值只作辅助。
+#   3. benchmark 用 SH600000 占位：本数据集中指数的 5 分钟数据只有 2026-08-19 之后
+#      一段，覆盖不了完整区间，「相对基准超额」失真。
+#   4. $factor 恒为 1.0：入库是不复权价（QMT dividend_type="none"）。
+#   5. 数据只有 2026-01-05 ~ 2026-09-30 共 9 个月（8688 根 5 分钟 K 线），
+#      train/valid/test 三段切得很紧，样本外只有 2 个月。
+# =============================================================================
+
+qlib_init:
+    provider_uri: "D:/qqmt/qlib_data/cn_5m_full"
+    region: cn
+    freq: 5min
+
+market: &market liquid500
+benchmark: &benchmark SH600000
+
+data_handler_config: &data_handler_config
+    start_time: 2026-01-05
+    end_time: 2026-09-30
+    instruments: *market
+    data_loader:
+        class: qlib.contrib.data.loader.QlibDataLoader
+        kwargs:
+            freq: 5min
+            config:
+                feature:
+                    - ["($close-$open)/$open", "$volume/Mean($volume, 20)", "($high-$low)/Ref($close, 1)", "$close/Ref($close, 1)-1"]
+                    - ["OPEN_RET", "VOL_RATIO", "RANGE_RET", "CLOSE_RET"]
+                label:
+                    # 次日同刻收益：下一根 bar 买入，持有 48 根(=1 个交易日)后卖出。T+1 可执行。
+                    - ["Ref($close, -49)/Ref($close, -1) - 1"]
+                    - ["LABEL0"]
+
+    learn_processors:
+        - class: Fillna
+          kwargs:
+              fields_group: feature
+        - class: DropnaLabel
+        - class: CSRankNorm
+          kwargs:
+              fields_group: feature
+        - class: CSRankNorm
+          kwargs:
+              fields_group: label
+
+    infer_processors:
+        - class: Fillna
+          kwargs:
+              fields_group: feature
+        - class: CSRankNorm
+          kwargs:
+              fields_group: feature
+        - class: CSRankNorm
+          kwargs:
+              fields_group: label
+
+port_analysis_config: &port_analysis_config
+    strategy:
+        class: TopkDropoutStrategy
+        module_path: qlib.contrib.strategy
+        kwargs:
+            signal: <PRED>
+            topk: 30
+            n_drop: 3
+    backtest:
+        start_time: 2026-08-01
+        end_time: 2026-09-30
+        account: 100000000
+        benchmark: *benchmark
+        exchange_kwargs:
+            codes: *market
+            limit_threshold: 0.095
+            deal_price: open
+            open_cost: 0.0005
+            close_cost: 0.0015
+            min_cost: 5
+
+task:
+    model:
+        class: LGBModel
+        module_path: qlib.contrib.model.gbdt
+        kwargs:
+            loss: mse
+            colsample_bytree: 0.8879
+            learning_rate: 0.05
+            subsample: 0.8789
+            lambda_l1: 205.6999
+            lambda_l2: 580.9768
+            max_depth: 8
+            num_leaves: 210
+            num_threads: 20
+            early_stopping_round: 50
+            num_boost_round: 300
+
+    dataset:
+        class: DatasetH
+        module_path: qlib.data.dataset
+        kwargs:
+            handler:
+                class: DataHandlerLP
+                module_path: qlib.contrib.data.handler
+                kwargs: *data_handler_config
+            segments:
+                train: [2026-01-05, 2026-05-31]
+                valid: [2026-06-01, 2026-07-31]
+                test: [2026-08-01, 2026-09-30]
+
+    record:
+        - class: SignalRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              model: <MODEL>
+              dataset: <DATASET>
+        - class: SigAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              ana_long_short: False
+              ann_scaler: 252
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              config: *port_analysis_config
