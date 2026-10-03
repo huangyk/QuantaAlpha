@@ -14,6 +14,7 @@ bash 里 $ 会被展开，这里用 Xclose/Xreturn 这类占位字段名（归�
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -76,6 +77,11 @@ TESTS = [
     "TS_ZSCORE($return, 10) - TS_ZSCORE($volume, 10)",
     # 17) $return 嵌套在其他算子里同样不能被驼峰化
     "TS_SUM(ABS($return), 5) / (TS_STD($return, 5) + 1e-8)",
+    # 18) COUNT 里的 && 必须保住 Count 的第二个实参（本轮复验真挂在这条上）
+    "COUNT(($volume < 0.5 * TS_MEAN($volume, 20)) && ($close > TS_MEAN($close, 20)), 5)",
+    # 19) 同一结构再套一层 RANK
+    "RANK(COUNT(($volume < 0.5 * TS_MEAN($volume, 20)) && "
+    "($close > TS_MEAN($close, 20)), 5) * 2)",
 ]
 
 # 截面排名占位符的剥离（去掉外层括号，必须平衡）
@@ -109,6 +115,17 @@ for idx, t in enumerate(TESTS):
     lines.append("OUT: " + out)
     lines.append("-" * 70)
     print("OUT: " + out[:160], flush=True)
+
+# 关键断言：COUNT((A) && (B), 5) 必须保住 Count 的第二个实参。
+# 曾因为 _find_left_start 漏传 pos、从串尾往左扫，被啃成 ((Count((A)) * ((B))), 5)：
+# 括号看着是平衡的，但 Count 只剩 1 个实参，qlib 报 missing 1 required positional argument: 'N'。
+for t in ("COUNT(($volume < 0.5 * TS_MEAN($volume, 20)) && ($close > TS_MEAN($close, 20)), 5)",
+          "RANK(COUNT(($volume < 0.5 * TS_MEAN($volume, 20)) "
+          "&& ($close > TS_MEAN($close, 20)), 5) * 2)"):
+    o = normalize_expr(t)
+    assert o.count("(") == o.count(")"), f"括号不平衡: {t} -> {o}"
+    assert o.count("Count(") == 1, f"Count 个数不对: {t} -> {o}"
+    assert re.search(r"Count\((.*, *5)\)", o), f"Count 丢了窗口实参 5: {t} -> {o}"
 
 # 关键断言：$return 会被 OP_CONVERSIONS 展开成真实字段，
 # 若被驼峰化成 $Return，qlib 没有这个字段 → 整列 NaN 且不抛异常（实测坑过 4 条因子）。

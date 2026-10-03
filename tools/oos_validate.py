@@ -172,7 +172,7 @@ def _r_delay(inner: str) -> str:
 _OPS = set("+-*/%<>!=&|,")  # 逗号也算边界：否则 COUNT((A) && (B), 5) 会把窗口参数 "5" 吞掉
 
 
-def _find_left_start(s: str) -> int:
+def _find_left_start(s: str, pos: int) -> int:
     """'&&' / '||' 起点向左，返回左操作数的起始下标。
 
     边界只认「开括号」和「字符串起点」，**不能**认比较运算符 —— 左操作数本身
@@ -180,8 +180,12 @@ def _find_left_start(s: str) -> int:
     早期这版把 '<' '>' 也当边界，实测会把 0.4 和 B 各自截成半个式子，
     再乘起来变成 "> 0.4 * B >= C" 这种 qlib 根本解析不了的串。
     停在 '(' 处还能顺带把整个括号组（含其内层）整体取进来，等价于用户写的括号。
+
+    注意 pos 必须真的参与：这一版曾把起点误写成 len(s)-1（漏传 pos），
+    于是每次都从**串尾**往左扫，COUNT((A) && (B), 5) 直接被啃成
+    ((Count((A)) * ((B))), 5) —— 括号虽平衡但语义全错、Count 少一个实参。
     """
-    depth, c = 0, len(s) - 1
+    depth, c = 0, pos - 1
     while c >= 0:
         ch = s[c]
         if ch == "(":
@@ -250,7 +254,7 @@ def _rewrite_and_or(expr: str) -> str:
             i = out.find(token)
             if i == -1:
                 break
-            a_start = _find_left_start(out)
+            a_start = _find_left_start(out, i)
             b_end = _find_right_end(out, i + len(token))
             a = out[a_start:i].strip()
             b = out[i + len(token) : b_end].strip()
