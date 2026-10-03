@@ -149,7 +149,12 @@ task:
           kwargs:
               ana_long_short: False
               ann_scaler: 252
-        - class: PortAnaRecord
-          module_path: qlib.workflow.record_temp
-          kwargs:
-              config: *port_analysis_config
+        # 刻意不挂 PortAnaRecord（组合回测）。两个原因，都不是偷懒：
+        #  1) 实测它会崩：qlib 的组合回测在做成交模拟时要把行情 resample 到 **1min**，
+        #     而本数据集只有 5min，直接抛
+        #     `ValueError: can't find a freq from Freq(5min) that can resample to 1min!`
+        #     并且这一崩发生在指标算完之后，导致整条 workflow 结果回传为空
+        #     （pipeline 侧表现就是 Combined Results 空 + RankIC=None）。
+        #  2) 就算不崩，净值也不可信：TopkDropoutStrategy 不理解 A 股 T+1，
+        #     会做出"当日买当日卖"的组合。
+        # 因此本轮只用 IC / RankIC 评判，port_analysis_config 保留但不挂载。
