@@ -72,6 +72,10 @@ TESTS = [
     "ZSCORE(TS_ZSCORE(TS_STD(Xreturn, 20) - TS_STD(Xreturn, 60), 60) * TS_SKEW(Xreturn, 20))",
     # 15) 回归：双参仍是时序滚动 z-score，不能被 14) 的截面分支吃掉
     "ZSCORE(Xclose, 20)",
+    # 16) $return 必须整块保留，再由 OP_CONVERSIONS 展开成真实字段（见下方断言）
+    "TS_ZSCORE($return, 10) - TS_ZSCORE($volume, 10)",
+    # 17) $return 嵌套在其他算子里同样不能被驼峰化
+    "TS_SUM(ABS($return), 5) / (TS_STD($return, 5) + 1e-8)",
 ]
 
 # 截面排名占位符的剥离（去掉外层括号，必须平衡）
@@ -105,6 +109,14 @@ for idx, t in enumerate(TESTS):
     lines.append("OUT: " + out)
     lines.append("-" * 70)
     print("OUT: " + out[:160], flush=True)
+
+# 关键断言：$return 会被 OP_CONVERSIONS 展开成真实字段，
+# 若被驼峰化成 $Return，qlib 没有这个字段 → 整列 NaN 且不抛异常（实测坑过 4 条因子）。
+for t in ("TS_ZSCORE($return, 10) - TS_ZSCORE($volume, 10)",
+          "TS_SUM(ABS($return), 5) / (TS_STD($return, 5) + 1e-8)"):
+    o = normalize_expr(t)
+    assert "$Return" not in o, f"$return 被驼峰化成 $Return 了（qlib 无此字段，整列 NaN）: {t} -> {o}"
+    assert "$close" in o, f"$return 没被展开成真实字段: {t} -> {o}"
 
 out_path = os.path.join(os.path.dirname(HERE), "data", "results", "norm_test.txt")
 os.makedirs(os.path.dirname(out_path), exist_ok=True)

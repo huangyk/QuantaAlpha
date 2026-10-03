@@ -336,9 +336,21 @@ def _rewrite_calls(expr: str) -> str:
     out, i, n = [], 0, len(expr)
     while i < n:
         ch = expr[i]
-        if ch.isspace() or ch in "$(),+-*/%<>!=&|":
+        if ch.isspace() or ch in "(),+-*/%<>!=&|":
             out.append(ch)
             i += 1
+            continue
+        # '$' 开头一律是行情字段（$close/$return/$volume…），必须整块原样吐出。
+        # 早期这里没把 '$' 排除在"字符白名单"之外，$return 会被拆成 '$' + 'return'，
+        # 'return' 再走下面的驼峰分支变成 'Return' → qlib 没有 $Return 这个字段，
+        # 整列全是 NaN（且不会抛异常，表现为 RankIC 为空，极难发现）。
+        # 池子里恰好有 4 条因子只用 $return 不用 $close/$volume，全部受害者。
+        if ch == "$":
+            j = i + 1
+            while j < n and (expr[j].isalnum() or expr[j] == "_"):
+                j += 1
+            out.append(expr[i:j])
+            i = j
             continue
         # 数字字面量（含 1e-8 这类科学计数法）整块吃掉，别把 1e-8 拆成 1 e - 8
         m = _NUM_RE.match(expr, i)
