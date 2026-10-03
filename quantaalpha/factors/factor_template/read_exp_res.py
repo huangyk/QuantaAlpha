@@ -3,22 +3,30 @@
 这是覆盖 rdagent 默认版本的健壮版（放在 quantaalpha/factors/factor_template/ 下，
 由 QlibFBWorkspace.inject_code_from_folder 注入到每个 workspace）。
 
-为什么必须改：
-  原版最后一行无条件执行
-      ret_data_frame = latest_recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
-      ret_data_frame.to_pickle("ret.pkl")
-  一旦 workflow 里没挂 PortAnaRecord（5min 数据集就是这种情况：qlib 的组合回测
-  要把行情 resample 到 1min，而数据集只有 5min，会抛
-  "can't find a freq from Freq(5min) that can resample to 1min!"），
-  这行就会抛异常 —— 于是 ret.pkl 根本不生成。
-  而 rdagent 的 QlibFBWorkspace.execute() 是这么写的：
-      if not (workspace/"ret.pkl").exists():
-          logger.error("No result file found."); return None, log
-  → 返回 None → 上层 _extract_metrics 拿不到东西 → **IC / RankIC 明明算出来了，
-    pipeline 里却是 RankIC=None，feedback 的 LLM 只会看到"因子失败了"。**
+改了什么、为什么
+----------------
+1. 【原版会崩】原版最后一行无条件执行
+       ret_data_frame = latest_recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
+       ret_data_frame.to_pickle("ret.pkl")
+   一旦 workflow 里没挂 PortAnaRecord（5min 数据集就是这种情况：qlib 的组合回测
+   要把行情 resample 到 1min，而数据集只有 5min，会抛
+   "can't find a freq from Freq(5min) that can resample to 1min!"），
+   这行就抛异常 —— ret.pkl 不生成，rdagent 的 execute() 直接返回 None，
+   IC / RankIC 明明算出来了却传不回 pipeline。
+   → 这里改成 try/except，拿不到就写占位。
 
-  所以这里：metrics 照常落 qlib_res.csv（IC / Rank IC 都在里面），
-  ret.pkl 拿不到就写一个占位（它只用于画净值图，不影响 IC 类指标）。
+2. 【占位不能滥发 —— 2026-10-04 的血泪教训】
+   只写占位会让「qrun 压根没跑成功、读到上一次的陈旧 recorder」这种情况
+   也伪装成成功：实测 17 条轨迹读到同一个 recorder，RankIC 全部等于
+   0.04130751359431582（16 位小数一致），而因子表达式明明各不相同。
+   这比直接报错危险得多 —— 假结果进了轨迹池，feedback 的 LLM 会被误导。
+   → 现在加两道校验，任一不过就**不写 qlib_res.csv**，让 execute() 诚实返回 None：
+     a) 新鲜度：recorder 的 start_time 必须晚于 combined_factors_df.parquet 的 mtime。
+        （runner.py 每次 execute 前都会重写这个 parquet，所以它是可靠的"本轮开始"锚点；
+         而 workspace 是按内容 hash 复用的，里面残留着上一轮的 recorder。）
+     b) 有效性：pred.pkl 必须存在、非空、行数 > 0。
+
+3. 【日志克制】只在关键节点输出一行，不刷屏。
 """
 
 import pickle
@@ -28,7 +36,22 @@ import pandas as pd
 import qlib
 from qlib.workflow import R
 
+here = Path(__file__).resolve().parent
+
 qlib.init()
+
+# ---- 新鲜度锚点：本轮 factor 写入时间 ------------------------------------
+anchor_path = here / "combined_factors_df.parquet"
+anchor_ms = int(anchor_path.stat().st_mtime * 1000) if anchor_path.exists() else 0
+
+
+def _ms(info, key):
+    v = info.get(key)
+    try:
+        return int(v) if v is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
 
 experiments = R.list_experiments()
 
@@ -41,38 +64,58 @@ for experiment in experiments:
             continue
         recorder = R.get_recorder(recorder_id=recorder_id, experiment_name=experiment)
         try:
-            end_time = recorder.info["end_time"]
+            info = recorder.info
         except Exception as exc:
-            print(f"Error: {exc}")
+            print(f"WARN: cannot read recorder {recorder_id}: {exc}")
             continue
-        if end_time is None:
-            print(f"Warning: Recorder {recorder_id} has no valid end time")
+        end_time = _ms(info, "end_time")
+        if end_time == 0:
+            print(f"WARN: recorder {recorder_id} has no valid end_time; skipped")
             continue
-        if latest_recorder is None or end_time > latest_recorder.info["end_time"]:
+        # 新鲜度：必须在本轮因子表写入之后才开始
+        if anchor_ms and _ms(info, "start_time") and _ms(info, "start_time") < anchor_ms:
+            print(f"WARN: recorder {recorder_id} is stale (start < factor mtime); skipped")
+            continue
+        if latest_recorder is None or end_time > _ms(latest_recorder.info, "end_time"):
             experiment_name = experiment
             latest_recorder = recorder
 
 if latest_recorder is None:
-    print("No recorders found")
-else:
-    print(f"Latest recorder: {latest_recorder}")
+    # 不写 qlib_res.csv、不写 ret.pkl —— 让上层看到"这次没结果"，而不是拿到旧结果
+    print(f"ERROR: no fresh recorder found (anchor={anchor_ms}). qlib_res.csv NOT written.")
+    raise SystemExit(1)
 
-    metrics = pd.Series(latest_recorder.list_metrics())
-    output_path = Path(__file__).resolve().parent / "qlib_res.csv"
-    metrics.to_csv(output_path)
-    print(f"Output has been saved to {output_path}")
+print(f"Latest recorder: {latest_recorder}")
 
-    # 组合回测结果可能不存在（未挂 PortAnaRecord 时），不能因此让整个脚本崩掉
-    here = Path(__file__).resolve().parent
-    try:
-        ret_df = latest_recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
-        ret_df.to_pickle(here / "ret.pkl")
-        print("ret.pkl written from portfolio_analysis")
-    except Exception as exc:
-        print(f"WARN: portfolio_analysis unavailable ({exc}); writing placeholder ret.pkl")
-        # 占位：rdagent 的 execute() 只检查文件是否存在并 read_pickle 画图，
-        # 空 DataFrame 不影响 qlib_res.csv 里的 IC / RankIC。
-        pd.DataFrame(columns=["return", "bench", "cost"]).to_pickle(here / "ret.pkl")
-        with open(here / "ret.pkl.placeholder", "w", encoding="utf-8") as fh:
-            fh.write("portfolio_analysis unavailable; IC/RankIC metrics are still valid.\n")
-            fh.write(f"reason: {exc}\n")
+# ---- 有效性：预测必须真的存在且非空 --------------------------------------
+try:
+    pred = latest_recorder.load_object("pred.pkl")
+except Exception as exc:
+    print(f"ERROR: pred.pkl unreadable ({exc}). qlib_res.csv NOT written.")
+    raise SystemExit(1)
+
+if pred is None or len(pred) == 0:
+    print("ERROR: pred.pkl is empty. qlib_res.csv NOT written.")
+    raise SystemExit(1)
+
+metrics = pd.Series(latest_recorder.list_metrics())
+if metrics.empty:
+    print("ERROR: recorder has no metrics. qlib_res.csv NOT written.")
+    raise SystemExit(1)
+
+output_path = here / "qlib_res.csv"
+metrics.to_csv(output_path)
+rank_ic = metrics.get("Rank IC")
+print(f"qlib_res.csv written: n_pred={len(pred)} RankIC={rank_ic}")
+
+# ---- ret.pkl：组合回测可能不存在，占位即可（只用于画净值图） -------------
+try:
+    ret_df = latest_recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
+    ret_df.to_pickle(here / "ret.pkl")
+    print("ret.pkl written from portfolio_analysis")
+except Exception as exc:
+    pd.DataFrame(columns=["return", "bench", "cost"]).to_pickle(here / "ret.pkl")
+    with open(here / "ret.pkl.placeholder", "w", encoding="utf-8") as fh:
+        fh.write("portfolio_analysis unavailable; IC/RankIC metrics are still valid.\n")
+        fh.write(f"reason: {exc}\n")
+    print(f"ret.pkl placeholder written ({type(exc).__name__})")

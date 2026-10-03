@@ -51,18 +51,37 @@ data_handler_config: &data_handler_config
     start_time: 2026-01-05
     end_time: 2026-09-30
     instruments: *market
+    # =========================================================================
+    # 【关键】必须用 NestedDataLoader，不能用单个 QlibDataLoader。
+    #
+    # 踩过的坑（2026-10-04）：第一版这里只写了单个 QlibDataLoader，
+    # 加载的是下面这 4 个写死的原始特征。结果 LLM 挖出来的因子虽然被
+    # 算成了 combined_factors_df.parquet 并放进 workspace，但**根本没进模型** ——
+    # 于是同一轮里所有轨迹训的都是同一个 4 特征模型，pred.pkl 字节级完全相同，
+    # RankIC 17 条轨迹全等于 0.04130751359431582（16 位小数一致）。
+    # 这个 0.0413 只是"4 特征基线"，不是任何因子的成绩。
+    #
+    # 正确写法（对照 conf_combined_factors.yaml）：NestedDataLoader 把两个 loader
+    # 横向拼起来 —— 前者给原始价量，后者用 StaticDataLoader 读 LLM 生成的因子表。
+    # =========================================================================
     data_loader:
-        class: qlib.contrib.data.loader.QlibDataLoader
+        class: NestedDataLoader
         kwargs:
-            freq: 5min
-            config:
-                feature:
-                    - ["($close-$open)/$open", "$volume/Mean($volume, 20)", "($high-$low)/Ref($close, 1)", "$close/Ref($close, 1)-1"]
-                    - ["OPEN_RET", "VOL_RATIO", "RANGE_RET", "CLOSE_RET"]
-                label:
-                    # 次日同刻收益：下一根 bar 买入，持有 48 根(=1 个交易日)后卖出。T+1 可执行。
-                    - ["Ref($close, -49)/Ref($close, -1) - 1"]
-                    - ["LABEL0"]
+            dataloader_l:
+                - class: qlib.contrib.data.loader.QlibDataLoader
+                  kwargs:
+                    freq: 5min
+                    config:
+                        feature:
+                            - ["($close-$open)/$open", "$volume/Mean($volume, 20)", "($high-$low)/Ref($close, 1)", "$close/Ref($close, 1)-1"]
+                            - ["OPEN_RET", "VOL_RATIO", "RANGE_RET", "CLOSE_RET"]
+                        label:
+                            # 次日同刻收益：下一根 bar 买入，持有 48 根(=1 个交易日)后卖出。T+1 可执行。
+                            - ["Ref($close, -49)/Ref($close, -1) - 1"]
+                            - ["LABEL0"]
+                - class: qlib.data.dataset.loader.StaticDataLoader
+                  kwargs:
+                    config: "combined_factors_df.parquet"
 
     learn_processors:
         - class: Fillna

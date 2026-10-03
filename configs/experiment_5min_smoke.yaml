@@ -1,0 +1,88 @@
+# ============================================================
+# 5min 挖掘冒烟配置：只跑 3 个 loop，用来快速验证链路是否真的通了
+#
+# 用途：改了 conf / 数据源 / README 之后，先跑这个确认
+#   1) 因子表 index 是 5min 时间戳（不是日频日期）
+#   2) 多条轨迹的 RankIC 互不相同（不是同一个基线模型的常数）
+# 验证手段：python tools/check_dup_metrics.py --since-minutes 60
+#
+# 与 experiment_5min.yaml 唯一差异：execution.max_loops 8 -> 3
+# （steps_per_loop=5，即 1 loop ≈ 1 条轨迹）
+# ============================================================
+
+planning:
+  enabled: true
+  num_directions: 3
+  max_attempts: 5
+  use_llm: true
+  allow_fallback: true
+  prompt_file: planning_prompts.yaml
+
+execution:
+  max_loops: 3
+  steps_per_loop: 5
+  step_n: null
+  use_local: true
+  parallel_execution: false
+  branch_log_root: log
+  branch_log_prefix: branch
+
+evolution:
+  enabled: true
+  mutation_enabled: true
+  crossover_enabled: true
+
+  max_rounds: 3
+  crossover_size: 2
+  crossover_n: 2
+
+  parallel_enabled: false
+  prefer_diverse_crossover: true
+  prompt_file: evolution_prompts.yaml
+
+  parent_selection_strategy: best
+  top_percent_threshold: 0.3
+
+  pool_path: "log/minute_trajectory_pool_smoke.json"
+  fresh_start: true
+
+  cleanup_on_finish: false
+
+quality_gate:
+  consistency_enabled: false
+  complexity_enabled: true
+  redundancy_enabled: true
+  consistency_strict_mode: false
+  max_correction_attempts: 3
+
+factor:
+  factors_per_hypothesis: 1
+  complexity:
+    symbol_length_threshold: 200
+    base_features_threshold: 5
+    free_args_ratio_threshold: 0.5
+  duplication:
+    enabled: true
+    threshold: 5
+    factor_zoo_path: null
+
+backtest:
+  use_docker: false
+  timeout: 1800
+  qlib:
+    config_name: conf_5min_nextday.yaml
+
+llm:
+  factor_mining_timeout: 999999
+  max_retries: 3
+  retry_delay: 1.0
+  json_mode_strict: true
+
+logging:
+  level: INFO
+  save_snapshots: true
+  save_trajectory_pool: true
+
+prompts:
+  planning: planning_prompts.yaml
+  evolution: evolution_prompts.yaml
