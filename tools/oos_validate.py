@@ -161,10 +161,16 @@ def _r_delay(inner: str) -> str:
 _OPS = set("+-*/%<>!=&|,")  # 逗号也算边界：否则 COUNT((A) && (B), 5) 会把窗口参数 "5" 吞掉
 
 
-def _find_left_start(s: str, pos: int, ops: set[str] | None = None) -> int:
-    """pos 是运算符起点，返回左操作数的起始下标。"""
-    ops = _OPS if ops is None else ops
-    depth, c = 0, pos - 1
+def _find_left_start(s: str) -> int:
+    """'&&' / '||' 起点向左，返回左操作数的起始下标。
+
+    边界只认「开括号」和「字符串起点」，**不能**认比较运算符 —— 左操作数本身
+    完全可以是一个比较式（A > 0.4 && B >= C 里左边就是 "A > 0.4"）。
+    早期这版把 '<' '>' 也当边界，实测会把 0.4 和 B 各自截成半个式子，
+    再乘起来变成 "> 0.4 * B >= C" 这种 qlib 根本解析不了的串。
+    停在 '(' 处还能顺带把整个括号组（含其内层）整体取进来，等价于用户写的括号。
+    """
+    depth, c = 0, len(s) - 1
     while c >= 0:
         ch = s[c]
         if ch == "(":
@@ -173,8 +179,6 @@ def _find_left_start(s: str, pos: int, ops: set[str] | None = None) -> int:
             depth -= 1
         elif ch == ")":
             depth += 1
-        elif ch in ops and depth == 0:
-            return c + 1
         c -= 1
     return 0
 
@@ -194,9 +198,16 @@ def _open_of(s: str, close_pos: int) -> int:
     return -1
 
 
-def _find_right_end(s: str, pos: int, ops: set[str] | None = None) -> int:
-    """pos 是运算符起点，返回右操作数的结束下标（开区间）。"""
-    ops = _OPS if ops is None else ops
+def _find_right_end(s: str, pos: int, stops: set[str] | None = None) -> int:
+    """从 pos 向右扫，返回右操作数的结束下标（开区间）。
+
+    stops 是「depth==0 时算边界」的额外字符集合，默认只有逗号。
+    与左扫描对称：不能认 '>' '>=' 这类比较符，否则 "A && B >= C" 会被截成
+    b = "B"，右半边直接丢掉。逗号必须留作边界，否则
+    COUNT((A) && (B), 5) 会把窗口参数 "5" 一起吞进来。
+    三元改写会传 _TERNARY_OPS（含 ':' '?' 以及逗号），左扫描那边同理。
+    """
+    stops = {","} if stops is None else stops
     depth, c, n = 0, pos, len(s)
     while c < n:
         ch = s[c]
@@ -206,7 +217,7 @@ def _find_right_end(s: str, pos: int, ops: set[str] | None = None) -> int:
             if depth == 0:
                 return c
             depth -= 1
-        elif ch in ops and depth == 0:
+        elif ch in stops and depth == 0:
             return c
         c += 1
     return n
@@ -228,7 +239,7 @@ def _rewrite_and_or(expr: str) -> str:
             i = out.find(token)
             if i == -1:
                 break
-            a_start = _find_left_start(out, i)
+            a_start = _find_left_start(out)
             b_end = _find_right_end(out, i + len(token))
             a = out[a_start:i].strip()
             b = out[i + len(token) : b_end].strip()
@@ -265,8 +276,34 @@ def _r_quantile(inner: str) -> str:
     return f"Quantile({a[0]}, {a[1]}, {a[2]})"
 
 
+def _r_max(inner: str) -> str:
+    """MAX(a, b)：平台语义是**逐元素**取大（MAX(0, x) 即 ReLU、MAX($close,$open) 即两价取高），
+    而 qlib 的 Max(feature, n) 是**滚动**取大、且第二参必须是窗口期 int。
+
+    直接透传会让 qlib 对常量实参调 get_extended_window_size() 直接炸
+    （实测 'int' object has no attribute 'get_extended_window_size'）。
+    统一改写成只用 Abs 的逐元素形式，常量/双特征两种写法都能吃：
+        max(a, b) = (a + b + |a - b|) / 2
+    """
+    a = _split_top_args(inner)
+    if len(a) < 2:
+        return f"Max({a[0]}, 1)"
+    return f"(({a[0]}) + ({a[1]}) + Abs(({a[0]}) - ({a[1]}))) / 2"
+
+
+def _r_min(inner: str) -> str:
+    """MIN(a, b)：逐元素取小，同上（min(a,b) = (a + b - |a-b|) / 2）。"""
+    a = _split_top_args(inner)
+    if len(a) < 2:
+        return f"Min({a[0]}, 1)"
+    return f"(({a[0]}) + ({a[1]}) - Abs(({a[0]}) - ({a[1]}))) / 2"
+
+
 # 需要按函数名分派的「非原生算子」；其余 TS_* 统一走 _ts_to_camel 驼峰映射
 _RULES = {
+    # 逐元素 MAX/MIN 必须在 MAX/MIN 之前占位：它们语义与 qlib 的滚动 Max/Min 完全不同
+    "MAX": _r_max,
+    "MIN": _r_min,
     "TS_ZSCORE": _r_zscore,
     "ZSCORE": _r_zscore,
     "ZSCORE_": _r_zscore,  # 兼容 TS_ZSCORE 之下层被提前吃掉的情况（防呆，正常用不到）
@@ -682,9 +719,11 @@ def main() -> int:
     # 逐个因子单独试算：qlib 对算子元数要求严格（如 Rank 必须给 N），
     # 混在一次 D.features 里任何一个算子炸掉都会拖垮整批，这里逐个隔离、失败即跳过并如实记录。
     logger.info("计算因子截面（%d 表达式）...", len(exprs))
-    # __CSRANK__ 后处理要知道 datetime 在第几层（qlib MultiIndex 层序不保证）
-    dt_level_hint = _detect_dt_level(series_list[0]) if series_list else 0
-
+    # __CSRANK__ 后处理要知道 datetime 在第几层（qlib MultiIndex 层序不保证）。
+    # 注意这里不能在循环外先写 `dt_level_hint = ... series_list[0]`：
+    # series_list 是 main() 的局部变量，在赋值前引用会直接 UnboundLocalError，
+    # `if series_list` 这种守卫也救不了。只能在循环里拿首个成功的 series 现算。
+    dt_level_hint = None
     series_list, ok_names = [], []
     for name, expr, raw_expr in zip(names, exprs, [f["expression"] for f in factors]):
         # 截面排名没法塞进 qlib 表达式（qlib 的 Rank 是时序滚动），
@@ -693,6 +732,10 @@ def main() -> int:
         qlib_expr = _strip_csrank(expr) if need_csrank else expr
         try:
             s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
+            # 必须在后处理之前定层：首个截面因子算完就定，晚一步会拿到 None，
+            # 而 groupby(level=None) 会把所有日期并成一组，截面排名直接算错。
+            if dt_level_hint is None:
+                dt_level_hint = _detect_dt_level(s)
             if need_csrank:
                 s = _csrank_postprocess(s, dt_level=dt_level_hint)
             s.name = name

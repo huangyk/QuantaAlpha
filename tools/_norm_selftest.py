@@ -59,6 +59,15 @@ TESTS = [
     "TS_ZSCORE(Xclose, 10) - TS_ZSCORE(Xvolume, 10)",
     # 10) 回归：TS_PCTCHANGE + TS_ZSCORE
     "TS_PCTCHANGE(Xclose, 3) * TS_ZSCORE(Xhigh - Xlow, 20)",
+    # 11) MAX(0, x) 常量在首位（平台是 ReLU，qlib 的 Max 会炸在 int.get_extended_window_size）
+    "SIGN(TS_SUM(Xreturn, 5) / (TS_STD(Xreturn, 5) + 1e-8)) * MAX(0, "
+    "Xvolume / TS_MEAN(Xvolume, 20) - 1.2)",
+    # 12) 双特征逐元素 MIN（平台是 MIN(close,open)，qlib 的 Min 同样会是滚动语义）
+    "MIN(Xclose, Xopen) - Xlow / (Xhigh - Xlow + 1e-8) * "
+    "((MIN(Xclose, Xopen) - Xlow) / (Xhigh - Xlow + 1e-8) > 0.4 && "
+    "Xclose >= (Xhigh + Xlow) / 2)",
+    # 13) 回归：MAX 常量 + 内层 TS_MAX 滚动语义不能混
+    "MAX(0, TS_MAX(Xclose, 20) - Xclose)",
 ]
 
 # 截面排名占位符的剥离（去掉外层括号，必须平衡）
