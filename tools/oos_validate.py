@@ -75,47 +75,390 @@ def _ts_to_camel(name: str) -> str:
     return tail.capitalize()
 
 
-# 实参要能吃一层嵌套括号，否则 TS_ZSCORE(ABS($return), 10) 这类写法会被漏掉，
-# 落到后面的通用归一里变成 qlib 未注册的 Zscore 而被跳过（算不出来，虽安全但白瞎一条因子）。
-_ARG = r"((?:[^()]|\([^()]*\))+?)"
-_ZSCORE_RE = re.compile(rf"\bTS_ZSCORE\s*\(\s*{_ARG}\s*,\s*(\d+)\s*\)", re.I)
-_PCTCHG_RE = re.compile(rf"\bTS_PCTCHANGE\s*\(\s*{_ARG}\s*,\s*(\d+)\s*\)", re.I)
+# 2026-10-03 重写：原先这套用正则 + 多轮替换来展开 TS_ZSCORE / TS_PCTCHANGE，
+# 实测有两个硬伤（都曾让整条因子从没被独立复验过）：
+#   (1) 实参模式 _ARG 只能吃**一层**嵌套括号，
+#       ZSCORE(TS_ZSCORE(TS_STD($return,20) - TS_STD($return,60), 60) * TS_SKEW($return,20))
+#       这种两级以上嵌套的实参压根匹配不上，外层展开失败 → 剩下 Zscore → 判"不可复算"跳过。
+#   (2) 通用 TS_*→驼峰的转换在展开之后跑，导致 TS_ZSCORE 先被改成 Zscore 再去找展开规则，顺序反了。
+# 现改为「平衡括号扫描 + 按函数名分派」的单趟重写，任意嵌套深度都吃得住。
+
+# qlib 的 Rank 是**时序滚动**排名 (Rank(feature, N) -> rolling(N).rank(pct=True))，
+# 而平台 function_lib.RANK 是**日截面**排名 (df.groupby('datetime').rank(pct=True))，
+# 两者语义完全不同。裸 RANK(x) 必须走截面口径，这里先降级成占位符，算完再后处理（见 _csrank_postprocess）。
+_CSRANK_MARK = "__CSRANK__"
 
 
-def _expand_ts_funcs(expr: str, max_round: int = 3) -> str:
-    """把没有单一对应算子、只能用基础算子组合还原的 TS_* 展开成 qlib 原生表达式。
+def _match_paren(s: str, i: int) -> int:
+    """s[i] 是 '(' 时返回配对的 ')' 下标，无括号返回 -1。"""
+    depth, n = 0, len(s)
+    while i < n:
+        if s[i] == "(":
+            depth += 1
+        elif s[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
 
-    目前两类：
-      TS_ZSCORE(x, N)    -> (x - Mean(x, N)) / (Std(x, N) + 1e-8)
-      TS_PCTCHANGE(x, N) -> x / Ref(x, N) - 1
 
-    多轮执行以支持嵌套（如 TS_ZSCORE(ABS($return), 10)）：正则的实参模式
-    [^,()]+ 只吃不含括号的表达式，第一轮替换掉最外层后才轮到内层。
+def _split_top_args(s: str) -> list[str]:
+    """按顶层逗号切函数实参（忽略括号内的逗号）。"""
+    args, buf, depth = [], [], 0
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        args.append("".join(buf).strip())
+    return args
+
+
+def _as_int(s: str):
+    try:
+        return int(float(s))
+    except (TypeError, ValueError):
+        return None
+
+
+def _r_zscore(inner: str) -> str:
+    """TS_ZSCORE(x, N) / ZSCORE(x, N) -> (x - Mean(x,N)) / (Std(x,N) + 1e-8)；无窗口走全样本。"""
+    a = _split_top_args(inner)
+    if len(a) >= 2 and _as_int(a[1]) is not None:
+        return f"(({a[0]} - Mean({a[0]}, {a[1]})) / (Std({a[0]}, {a[1]}) + 1e-8))"
+    return f"(({a[0]} - Mean({a[0]})) / (Std({a[0]}) + 1e-8))"
+
+
+def _r_pctchange(inner: str) -> str:
+    a = _split_top_args(inner)
+    return f"({a[0]} / Ref({a[0]}, {a[1]}) - 1)"
+
+
+def _r_delta(inner: str) -> str:
+    """TS_DELTA/DELTA(x, p) -> qlib 无 Delta，用 Ref 还原成 x - Ref(x, p)。"""
+    a = _split_top_args(inner)
+    return f"({a[0]} - Ref({a[0]}, {a[1]}))"
+
+
+def _r_delay(inner: str) -> str:
+    """DELAY(x, p) -> 驼峰会给出 qlib 未注册的 Delay，必须显式归一成 Ref。"""
+    a = _split_top_args(inner)
+    return f"Ref({a[0]}, {a[1]})"
+
+
+# && / || 等逻辑运算符在 qlib 里只能出现在表达式顶层，放进 COUNT(...) 这类函数实参
+# 就是语法错误（实测 invalid syntax）。布尔比较结果本身是 0/1，所以改写成算术等价式。
+# 下面两个函数负责从运算符位置向两侧找“最近的一个边界”：要么是一个括号（含其自身的
+# 开/闭括号），要么是一个同层运算符。比“先找配对括号再取内容”稳得多 —— 后者在
+# COUNT((A) && (B), 5) 这种带嵌套的实参上会把括号配对错，替换后字符串不变 → 死循环。
+_OPS = set("+-*/%<>!=&|,")  # 逗号也算边界：否则 COUNT((A) && (B), 5) 会把窗口参数 "5" 吞掉
+
+
+def _find_left_start(s: str, pos: int, ops: set[str] | None = None) -> int:
+    """pos 是运算符起点，返回左操作数的起始下标。"""
+    ops = _OPS if ops is None else ops
+    depth, c = 0, pos - 1
+    while c >= 0:
+        ch = s[c]
+        if ch == "(":
+            if depth == 0:
+                return c
+            depth -= 1
+        elif ch == ")":
+            depth += 1
+        elif ch in ops and depth == 0:
+            return c + 1
+        c -= 1
+    return 0
+
+
+def _open_of(s: str, close_pos: int) -> int:
+    """close_pos 处是 ')'，返回配对的那个 '(' 的下标；找不到返回 -1。
+
+    之前用「往左走，depth 归零时的那个 '('」来定位，在这个因子上永远差一层
+    （COUNT((A) && (B), 5) * ((cond) ? (a) : 0) 这类嵌套里 depth 归零点不稳定）。
+    改成直接搜「配对 ')' 正好是 close_pos 的那个 '('」，语义唯一、不会错层。
     """
-    result = expr
-    for _ in range(max_round):
-        new = _ZSCORE_RE.sub(
-            lambda m: f"(({m.group(1)} - Mean({m.group(1)}, {m.group(2)}))"
-                      f" / (Std({m.group(1)}, {m.group(2)}) + 1e-8))",
-            result,
-        )
-        new = _PCTCHG_RE.sub(
-            lambda m: f"({m.group(1)} / Ref({m.group(1)}, {m.group(2)}) - 1)", new
-        )
-        if new == result:
+    p = s.find("(")
+    while 0 <= p < close_pos:
+        if _match_paren(s, p) == close_pos:
+            return p
+        p = s.find("(", p + 1)
+    return -1
+
+
+def _find_right_end(s: str, pos: int, ops: set[str] | None = None) -> int:
+    """pos 是运算符起点，返回右操作数的结束下标（开区间）。"""
+    ops = _OPS if ops is None else ops
+    depth, c, n = 0, pos, len(s)
+    while c < n:
+        ch = s[c]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                return c
+            depth -= 1
+        elif ch in ops and depth == 0:
+            return c
+        c += 1
+    return n
+
+
+def _rewrite_and_or(expr: str) -> str:
+    """布尔逻辑 && / || 改写成 qlib 认得的算术等价式。
+
+    直接把 && 换成 and 是没用的：qlib 的 and/or 只在表达式顶层成立，
+    放进 COUNT(...) 这类函数实参里就是语法错误（实测 invalid syntax）。
+    布尔比较结果本身就是 0/1，所以：A && B -> A*B，A || B -> A+B-A*B。
+    """
+    out = expr
+    for token, build in (
+        ("&&", lambda a, b: f"(({a}) * ({b}))"),
+        ("||", lambda a, b: f"(({a}) + ({b}) - ({a}) * ({b}))"),
+    ):
+        for _round in range(64):  # 硬上限：一次迭代没改到字符串就跳出，杜绝死循环
+            i = out.find(token)
+            if i == -1:
+                break
+            a_start = _find_left_start(out, i)
+            b_end = _find_right_end(out, i + len(token))
+            a = out[a_start:i].strip()
+            b = out[i + len(token) : b_end].strip()
+            if not a or not b:
+                break
+            new_out = out[:a_start] + build(a, b) + out[b_end:]
+            if new_out == out:
+                break
+            out = new_out
+    return out
+
+
+def _r_rank(inner: str) -> str:
+    """TS_RANK(x, N)：平台是时序滚动排名，qlib Rank 也是滚动排名，语义一致，直接透传并补上必填的 N。"""
+    a = _split_top_args(inner)
+    return f"Rank({a[0]}, {a[1]})"
+
+
+def _r_csrank(inner: str) -> str:
+    """裸 RANK(x)：平台是日截面排名 → 占位符，留到算完再按日分组做 rank(pct=True)。"""
+    return f"{_CSRANK_MARK}({_split_top_args(inner)[0]})"
+
+
+def _r_quantile(inner: str) -> str:
+    """TS_QUANTILE 的实参顺序在池子里不统一（TS_QUANTILE($volume,0.25,20) 与
+    TS_QUANTILE($close,20,0.2) 同时存在），而 qlib 是 Quantile(feature, N, qscore)；
+    因此只要第二个实参是 (0,1) 的概率值就交换，否则原样透传。"""
+    a = _split_top_args(inner)
+    if len(a) != 3:
+        return f"Quantile({', '.join(a)})"
+    q, n = _as_int(a[1]), _as_int(a[2])
+    if q is not None and 0 < q < 1 and n is not None and n > 1:
+        return f"Quantile({a[0]}, {n}, {q})"
+    return f"Quantile({a[0]}, {a[1]}, {a[2]})"
+
+
+# 需要按函数名分派的「非原生算子」；其余 TS_* 统一走 _ts_to_camel 驼峰映射
+_RULES = {
+    "TS_ZSCORE": _r_zscore,
+    "ZSCORE": _r_zscore,
+    "ZSCORE_": _r_zscore,  # 兼容 TS_ZSCORE 之下层被提前吃掉的情况（防呆，正常用不到）
+    "TS_PCTCHANGE": _r_pctchange,
+    "TS_DELTA": _r_delta,
+    "DELTA": _r_delta,
+    "DELAY": _r_delay,
+    "TS_DELAY": _r_delay,
+    "TS_RANK": _r_rank,
+    "RANK": _r_csrank,
+    "TS_QUANTILE": _r_quantile,
+}
+
+_NUM_RE = re.compile(r"\.?\d+(?:[eE][+-]?\d+)?")
+
+
+def _rewrite_calls(expr: str) -> str:
+    """单趟扫描重写：平衡括号定位每个函数的实参，按 _RULES 分派或走驼峰归一。"""
+    out, i, n = [], 0, len(expr)
+    while i < n:
+        ch = expr[i]
+        if ch.isspace() or ch in "$(),+-*/%<>!=&|":
+            out.append(ch)
+            i += 1
+            continue
+        # 数字字面量（含 1e-8 这类科学计数法）整块吃掉，别把 1e-8 拆成 1 e - 8
+        m = _NUM_RE.match(expr, i)
+        if ch.isdigit() or ch == ".":
+            out.append(m.group(0))
+            i = m.end()
+            continue
+        j = i
+        while j < n and (expr[j].isalnum() or expr[j] == "_"):
+            j += 1
+        if j == i:
+            # 未收录的字符（: ? # " 等）必须原样吐出并前进，否则 i 不前进 → 死循环。
+            # 三元改写残留的 ':' / '?' 就会走到这里。
+            out.append(ch)
+            i += 1
+            continue
+        name, k = expr[i:j], j
+        while k < n and expr[k].isspace():
+            k += 1
+        if k < n and expr[k] == "(":
+            close = _match_paren(expr, k)
+            if close == -1:
+                out.append(f"{name}(")
+                i = k + 1
+                continue
+            inner = expr[k + 1 : close]
+            # 实参必须递归归一：否则规则生成的串里残留的 TS_MAX/TS_STD 等不会被再扫一遍，
+            # 后面对 OP_CONVERSIONS 做全局 replace 时 "MAX"->"Max" 会把 TS_MAX 啃成 TS_Max。
+            # 递归深度靠 inner 严格变短保证终止。
+            inner = _rewrite_calls(inner)
+            fn = _RULES.get(name.upper())
+            out.append(fn(inner) if fn else f"{_ts_to_camel(name)}({inner})")
+            i = close + 1
+            continue
+        out.append(_ts_to_camel(name) if not name.isdigit() else name)
+        i = j
+    return "".join(out)
+
+
+class TernaryNotSupported(Exception):
+    """三元改写失败（分支定位不了）：整条表达式原样退回，由上层判"不可复算"后跳过。"""
+
+
+_TERNARY_OPS = _OPS | {"?", ":"}
+
+
+def _rewrite_ternary(expr: str) -> str:
+    """三元 c ? a : b 改写成 (c)*a + (1-c)*b。
+
+    qlib 表达式引擎没有三元运算符，只能这么近似。仅当 c 是**布尔比较**时与平台
+    pandas 口径等价；若 c 是 0/1 之外的连续分数，数值会有偏差 —— 因此调用方会把
+    这类因子的复算结果标记为"近似"，不与他类因子混为一谈。
+    """
+    out = expr
+    # '?' 与 ':' 都当边界，这样三个分支的边界是一次同样规则的扫描算出来的，
+    # 不再依赖“往左找配对括号”那套容易错位的实现（那版会把 cond 截成半个表达式）。
+    for _ in range(32):
+        if "?" not in out:
             break
-        result = new
-    return result
+        i = out.rfind("?")  # 从最内层（最右）开始，嵌套自然由内向外展开
+        # 条件边界不能靠“往左找第一个边界”：那会把比较运算符 "<" 当成起点，
+        # 把 (Xclose < 0.9 * X) 截成 "0.9 * X"。
+        # 正确做法是找 '?' 左边紧邻的那个 ')'，再向内配对它那个 '('。
+        c = i - 1
+        while c >= 0 and out[c].isspace():
+            c -= 1
+        if os.environ.get("OOSV_DEBUG_TERN") == "1":
+            logger.warning("[tern] i=%d c=%d out[c]=%r tail=%r", i, c, out[c] if c >= 0 else None, out[max(0, i - 40) : i])
+        c_start = _open_of(out, c)
+        if os.environ.get("OOSV_DEBUG_TERN") == "1":
+            logger.warning(
+                "[tern] c_start=%d cond_raw=%r", c_start, out[c_start:i].strip()[:120]
+            )
+        if c < 0 or out[c] != ")":
+            raise TernaryNotSupported("条件不是括号包起来的比较式")
+        c_start = _open_of(out, c)
+        if c_start < 0:
+            raise TernaryNotSupported("找不到条件左括号")
+        cond_raw = out[c_start:i].strip()
+        # 条件必须是自带括号的比较式（本项目的因子都这么写）。裸比较式宁可判定
+        # “不可复算”跳过，也不要把 Xclose < 0.9 * X 截成半个表达式假装算过。
+        if not (
+            cond_raw.startswith("(")
+            and cond_raw.endswith(")")
+            and _match_paren(cond_raw, 0) == len(cond_raw) - 1
+        ):
+            raise TernaryNotSupported("条件不是括号包起来的比较式")
+        cond = cond_raw[1:-1].strip()
+        t_end = _find_right_end(out, i + 1, _TERNARY_OPS)  # 停在 ':' / ')' / 运算符
+        true_b = out[i + 1 : t_end].strip()
+        f_start = t_end + 1
+        while f_start < len(out) and out[f_start].isspace():
+            f_start += 1
+        f_end = _find_right_end(out, f_start, _TERNARY_OPS)
+        false_b = out[f_start:f_end].strip()
+        if not cond or not true_b or not false_b:
+            raise TernaryNotSupported("三元分支为空")
+        rebuilt = f"(({cond}) * ({true_b}) + (1 - ({cond})) * ({false_b}))"
+        out = out[:c_start] + rebuilt + out[f_end:]
+    if "?" in out or ":" in out:
+        raise TernaryNotSupported("三元未完全展开")
+    return out
 
 
 def normalize_expr(expr: str) -> str:
     """把平台简写表达式还原成 qlib 原生表达式（口径与挖掘时一致）。"""
-    result = _expand_ts_funcs(expr)
+    # 逻辑运算：平台/LLM 写的是 Python 方言 && / ||，qlib 表达式引擎只认 and / or。
+    # 不换会在 parse_field 阶段直接 invalid syntax 崩掉整条（实测
+    # Count(($volume<0.5*Mean($volume,20))&&($close>Mean($close,20)),5) 就是这么挂的）。
+    result = _rewrite_and_or(expr)
+    try:
+        result = _rewrite_ternary(result)
+    except TernaryNotSupported as exc:
+        # 保留三元原样，让 is_qlib_compatible 判定为不可复算并如实跳过，
+        # 而不是产出一个语义已变的表达式假装算过。这里必须打日志，
+        # 否则静默返回会让因子“凭空消失”，排查时完全看不到线索。
+        logger.warning("三元改写失败，因子按不可复算跳过：%s | 原文 %s", exc, expr)
+        return result
+    result = _rewrite_calls(result)
     for old, new in OP_CONVERSIONS.items():
         result = result.replace(old, new)
-    # 通用 TS_* 归一：逐个函数调用位置替换，避免误伤表达式里的普通大写串
-    result = _CALL_RE.sub(lambda m: f"{_ts_to_camel(m.group(1))}{m.group(0)[len(m.group(1)):]}", result)
     return result
+
+
+def _strip_csrank(expr: str) -> str:
+    """把 __CSRANK__(x) 还原成 x（平衡地去掉外层括号）。
+
+    注意不能简单 `expr.replace("__CSRANK__(", "")`：那只会删掉左半边，
+    留下一个多余的 ')'，qlib 直接语法错。这里逐层找配对右括号再摘干净。
+    """
+    out = expr
+    while _CSRANK_MARK in out:
+        i = out.index(f"{_CSRANK_MARK}(")
+        start = i + len(_CSRANK_MARK) + 1
+        depth, j = 1, start
+        while j < len(out) and depth:
+            if out[j] == "(":
+                depth += 1
+            elif out[j] == ")":
+                depth -= 1
+            j += 1
+        # j 停在当前 CSRANK 的配对 ')' 之后一位；内容区间是 [start, j-1)
+        out = out[:i] + out[start : j - 1] + out[j:]
+    return out
+
+
+def _detect_dt_level(s: pd.Series, default: int = 0) -> int:
+    """定位 MultiIndex 里 datetime 在第几层：优先按 index 名，退化取唯一值最少的那层。"""
+    if not isinstance(s.index, pd.MultiIndex):
+        return default
+    names = [str(x).lower() for x in s.index.names]
+    if "datetime" in names:
+        return names.index("datetime")
+    counts = [s.index.get_level_values(i).nunique() for i in range(s.index.nlevels)]
+    return int(np.argmin(counts))
+
+
+def _csrank_postprocess(s: pd.Series, dt_level: int = 0) -> pd.Series:
+    """把 __CSRANK__(x) 的占位符替换成真正的日截面排名。
+
+    平台 function_lib.RANK = df.groupby('datetime').rank(pct=True)，
+    这里严格照做（pandas 的 rank 默认跳过 NaN，与平台一致）。
+    """
+    if dt_level >= 0:
+        idx = s.index if not isinstance(s.index, pd.MultiIndex) else None
+        if isinstance(s.index, pd.MultiIndex) and dt_level < s.index.nlevels:
+            return s.groupby(level=dt_level).rank(pct=True)
+    return s.rank(pct=True)
 
 
 def unsupported_operators(expr: str, known: set[str]) -> list[str]:
@@ -337,10 +680,19 @@ def main() -> int:
     # 逐个因子单独试算：qlib 对算子元数要求严格（如 Rank 必须给 N），
     # 混在一次 D.features 里任何一个算子炸掉都会拖垮整批，这里逐个隔离、失败即跳过并如实记录。
     logger.info("计算因子截面（%d 表达式）...", len(exprs))
+    # __CSRANK__ 后处理要知道 datetime 在第几层（qlib MultiIndex 层序不保证）
+    dt_level_hint = _detect_dt_level(series_list[0]) if series_list else 0
+
     series_list, ok_names = [], []
-    for name, expr in zip(names, exprs):
+    for name, expr, raw_expr in zip(names, exprs, [f["expression"] for f in factors]):
+        # 截面排名没法塞进 qlib 表达式（qlib 的 Rank 是时序滚动），
+        # 所以把 __CSRANK__(x) 先还原成 x 算值，再按日分组做 rank(pct=True)。
+        need_csrank = _CSRANK_MARK in expr
+        qlib_expr = _strip_csrank(expr) if need_csrank else expr
         try:
-            s = D.features(codes, [expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
+            s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
+            if need_csrank:
+                s = _csrank_postprocess(s, dt_level=dt_level_hint)
             s.name = name
             series_list.append(s)
             ok_names.append(name)

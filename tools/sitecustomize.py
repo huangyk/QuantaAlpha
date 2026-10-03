@@ -34,6 +34,7 @@ class _OnceStderr:
                 if tag in self._seen:
                     return len(s)  # 吞掉重复项
                 self._seen.add(tag)
+        # 其余内容（业务日志、traceback、warning）原样透传到真 stderr，不做任何改写
         return self._stream.write(s)
 
     def flush(self):
@@ -84,6 +85,9 @@ try:
     apply_research_prompt_patch()
 except Exception:
     pass
-finally:
-    # import/apply 阶段结束，立刻还原真 stderr，别影响后续业务输出
-    sys.stderr = _real_stderr
+# 注意：这里 **故意不还原** stderr。第一版在 finally 里 `sys.stderr = _real_stderr` 立即还原，
+# 结果包装器活不到业务代码写日志的时候（实测 mining 日志里 patch 噪声一行没少，仍 1205 行重复）。
+# 包装器只吞掉已知 patch 的重复提示，其余内容全部转发，等价于真 stderr，不会污染业务输出。
+# 保留模块级引用防止被 GC，且不会覆写后来框架自己设置的 sys.stderr。
+# 保留实例引用防止被 GC 回收
+_STDERR_FILTER = sys.stderr
