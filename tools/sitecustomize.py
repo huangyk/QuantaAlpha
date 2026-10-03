@@ -9,13 +9,36 @@ Must no-op if rdagent is not installed (e.g. conda env rdagent4qlib inheriting P
 按 tag 去重的过滤器，每个 patch 只留第一条。
 """
 
+import re
 import sys
+
+# ANSI 颜色/光标转义符：第三方库（rich / tqdm / rdagent）往 stderr 写彩色日志时会带，
+# 落盘后是一堆 `^[[36m` 之类的乱码，直接剥掉。
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07")
+
+# 同一「归一化文本」最多放行几次。0 = 不限制。
+# 归一化 = 抹掉时间戳/数字/长路径，于是 "LiteLLM: Failed to fetch ... 502 Bad Gateway"
+# 这种每次 import 都来一遍的噪声只会留下前 2 条，而不会把 RankIC 进度行挤走。
+_NOISE_MAX = 2
+
+_TS_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?|\d{2}:\d{2}:\d{2}(?:[.,]\d+)?|\d+"
+)
+
+
+def _norm_key(line: str) -> str:
+    """把一行日志压成「模板」：去掉时间戳与数字，只留骨架，用来判断是否同一类噪声。"""
+    return _TS_RE.sub("#", line).strip()[:200]
 
 
 class _OnceStderr:
-    """按 tag 去重地放行 stderr 的包装：同一个 patch 标签只放行第一次。"""
+    """stderr 降噪包装：①剥 ANSI ②patch 提示按 tag 只留一条 ③同模板噪声最多留 N 条。
 
-    __slots__ = ("_stream", "_seen")
+    只作用于 stderr；stdout（复验结果表、print 出来的关键指标）完全不碰。
+    traceback 每一行内容都不同，不会被误吞。
+    """
+
+    __slots__ = ("_stream", "_seen", "_counts")
 
     _KNOWN = (
         "chat-retry", "cpu-throttle", "factor-datetime", "factor-empty",
@@ -26,15 +49,28 @@ class _OnceStderr:
     def __init__(self, stream):
         self._stream = stream
         self._seen = set()
+        self._counts = {}
 
     def write(self, s):
-        if "-patch]" in s:
+        if not s or not s.strip():
+            return self._stream.write(s)
+        if "\x1b" in s:
+            s = _ANSI_RE.sub("", s)  # ① 剥颜色转义
+        if "-patch]" in s:  # ② patch 提示按 tag 去重
             tag = s.split("-patch]")[0].strip().strip("[]").strip()
             if tag in self._KNOWN:
                 if tag in self._seen:
-                    return len(s)  # 吞掉重复项
+                    return len(s)
                 self._seen.add(tag)
-        # 其余内容（业务日志、traceback、warning）原样透传到真 stderr，不做任何改写
+                return self._stream.write(s)
+        # ③ 其它同模板噪声（LiteLLM WARNING、重复的第三方 INFO…）最多放行 _NOISE_MAX 次
+        key = _norm_key(s)
+        if key:
+            c = self._counts.get(key, 0)
+            if c >= _NOISE_MAX:
+                return len(s)
+            self._counts[key] = c + 1
+        # 其余内容（业务日志、traceback、error）原样透传到真 stderr，不做任何改写
         return self._stream.write(s)
 
     def flush(self):
