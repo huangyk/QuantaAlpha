@@ -229,18 +229,33 @@ def icir(ic: pd.Series, ann: int = 252) -> float:
 
 def topk_equity_curve(
     df: pd.DataFrame, factor_col: str, fwd_col: str, topk: int, cost_bps: float,
-    dt_level: int = 0, ins_level: int = 1,
+    dt_level: int = 0, ins_level: int = 1, rebalance: int = 1,
 ) -> pd.DataFrame:
     """每日截面取因子值最高 topk 只等权持有一期，按日换手扣费。
+
+    rebalance=N 表示每 N 个交易日才重新选一次股，中间沿用上次的持仓。
+    这是这套因子能不能落地的关健变量：日频全速换手时换手率常在 70% 以上，
+    几 bps 成本就把 RankIC 换来的那点收益吃光，必须验证降频后还剩多少。
 
     返回 (ret, turnover, cost) 日频序列。
     """
     rows = []
     prev_hold: set[str] | None = None
-    for day, g in df[[factor_col, fwd_col]].replace([np.inf, -np.inf], np.nan).dropna().groupby(level=dt_level):
-        g = g.sort_values(factor_col, ascending=False).head(topk)
-        hold = set(g.index.get_level_values(ins_level))
-        fwd_ret = float(g[fwd_col].mean())
+    cur_hold: set[str] | None = None
+    for i, (day, g) in enumerate(
+        df[[factor_col, fwd_col]].replace([np.inf, -np.inf], np.nan).dropna().groupby(level=dt_level)
+    ):
+        ranked = g.sort_values(factor_col, ascending=False)
+        # 只在调仓日重选股；非调仓日沿用上次持仓，不产生换手也就不扣费。
+        # 注意条件不能写成 `rebalance > 1 and i % rebalance == 0`：
+        # rb=1 时 i%1==0 恒真而 rb>1 恒假，会让 rb=1 退化成「只选一次、永久持股」，
+        # 换手率变 0、成本全不扣，整套日频基线就废了。
+        if cur_hold is None or i % rebalance == 0:
+            # Index 没有 .head()，切片即可
+            cur_hold = set(ranked.index.get_level_values(ins_level)[:topk])
+        hold = cur_hold
+        held = ranked[ranked.index.get_level_values(ins_level).isin(hold)]
+        fwd_ret = float(held[fwd_col].mean()) if len(held) else float("nan")
         if prev_hold is None:
             turnover = 1.0
         else:
@@ -282,6 +297,10 @@ def main() -> int:
     ap.add_argument("--test-end", default="2026-08-18")
     ap.add_argument("--horizon", type=int, default=1, help="前瞻期（交易日），1=次日收益")
     ap.add_argument("--topk", type=int, default=50)
+    ap.add_argument(
+        "--rebalance", type=int, default=1,
+        help="调仓周期（交易日）：1=日频、5=每周、10=每两周。降频是这套因子落地的关键变量",
+    )
     ap.add_argument("--cost-bps", type=float, default=5.0, help="单边成本（基点），A股双边常见 5~10")
     ap.add_argument("--out", default="data/results/oos_validate.csv")
     args = ap.parse_args()
@@ -391,8 +410,6 @@ def main() -> int:
     # gross 必须是「零成本」那一档的年化。
     # 注意 perf_stats 吃的是 net_ret（已扣费），同一序列无论在哪个 bps 下都已经是净收益，
     # 若把 st["annualized"] 同时赋给 gross_ann，毛/净两列会恒等、扣费前后的毛收益对比彻底失真。
-    gross_eq = topk_equity_curve(df, top_name, "fwd", args.topk, 0.0, dt_level, ins_level)
-
     def _seg_stats(eq: pd.DataFrame, seg: str, s: str, e: str) -> dict:
         q = eq[(eq.index >= pd.Timestamp(s)) & (eq.index <= pd.Timestamp(e))]
         return {
@@ -401,27 +418,31 @@ def main() -> int:
             "turnover": float(q["turnover"].mean()) if not q.empty else float("nan"),
         }
 
-    gross_cache = {seg: _seg_stats(gross_eq, seg, s, e) for seg, s, e in segments}
     sens_rows = []
-    for bps in [0.0, 3.0, 5.0, 10.0, 20.0]:
-        eq = topk_equity_curve(df, top_name, "fwd", args.topk, bps, dt_level, ins_level)
-        for seg, s, e in segments:
-            q = _seg_stats(eq, seg, s, e)
-            st = perf_stats(q["series"])
-            g = gross_cache[seg]
-            sens_rows.append(
-                {
-                    "cost_bps": bps,
-                    "segment": seg,
-                    "days": q["days"],
-                    "avg_turnover": q["turnover"],
-                    "gross_ann": perf_stats(g["series"])["annualized"],
-                    "net_ann": st["annualized"],
-                    "net_minus_gross": st["annualized"] - perf_stats(g["series"])["annualized"],
-                    "sharpe": st["sharpe"],
-                    "max_drawdown": st["max_drawdown"],
-                }
-            )
+    for rb in [1, 5, 10]:
+        # 每个调仓周期都要有自己的零成本基准，否则 gross 会串档
+        gross_eq = topk_equity_curve(df, top_name, "fwd", args.topk, 0.0, dt_level, ins_level, rb)
+        gross_cache = {seg: _seg_stats(gross_eq, seg, s, e) for seg, s, e in segments}
+        for bps in [0.0, 3.0, 5.0, 10.0, 20.0]:
+            eq = topk_equity_curve(df, top_name, "fwd", args.topk, bps, dt_level, ins_level, rb)
+            for seg, s, e in segments:
+                q = _seg_stats(eq, seg, s, e)
+                st = perf_stats(q["series"])
+                g = gross_cache[seg]
+                sens_rows.append(
+                    {
+                        "rebalance": rb,
+                        "cost_bps": bps,
+                        "segment": seg,
+                        "days": q["days"],
+                        "avg_turnover": q["turnover"],
+                        "gross_ann": perf_stats(g["series"])["annualized"],
+                        "net_ann": st["annualized"],
+                        "net_minus_gross": st["annualized"] - perf_stats(g["series"])["annualized"],
+                        "sharpe": st["sharpe"],
+                        "max_drawdown": st["max_drawdown"],
+                    }
+                )
     sens_df = pd.DataFrame(sens_rows)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -439,29 +460,27 @@ def main() -> int:
     for _, r in summ_df.iterrows():
         if r["ric_train"] and not pd.isna(r["ric_train"]) and r["ric_train"] != 0:
             print(f"  {r['factor']:<45} {r['ric_test']/r['ric_train']:.2f}x")
-    print("\n扣费敏感性（基准因子 %s）：" % top_name)
+    print("\n扣费 × 调仓周期敏感性（基准因子 %s）: 净年化" % top_name)
     order = [0.0, 3.0, 5.0, 10.0, 20.0]
-    print("毛收益（零成本口径）:")
-    print(
-        sens_df.pivot_table(index="cost_bps", columns="segment", values="gross_ann")
-        .reindex(order)
-        .to_string(float_format=lambda v: f"{v:.4f}")
-    )
-    print("\n净收益:")
-    print(
-        sens_df.pivot_table(index="cost_bps", columns="segment", values="net_ann")
-        .reindex(order)
-        .to_string(float_format=lambda v: f"{v:.4f}")
-    )
+    for rb in [1, 5, 10]:
+        sub = sens_df[sens_df.rebalance == rb]
+        print(f"\n  调仓周期 = 每 {rb} 个交易日（turnover 均值 %.3f）"
+              % sub[sub.segment == "train"]["avg_turnover"].mean())
+        print(sub.pivot_table(index="cost_bps", columns="segment", values="net_ann")
+              .reindex(order)
+              .to_string(float_format=lambda v: f"{v:.4f}"))
     print("\n成本吃掉的比例 (1 - net/gross):")
-    ratio = pd.DataFrame(
-        {
-            seg: 1 - sens_df[(sens_df.segment == seg)].set_index("cost_bps")["net_ann"]
-            / sens_df[(sens_df.segment == seg)].set_index("cost_bps")["gross_ann"]
-            for seg in ("train", "valid", "test")
-        }
-    ).reindex(order)
-    print(ratio.to_string(float_format=lambda v: f"{v:.3f}"))
+    for rb in [1, 5, 10]:
+        sub = sens_df[sens_df.rebalance == rb]
+        ratio = pd.DataFrame(
+            {
+                seg: 1 - sub[(sub.segment == seg)].set_index("cost_bps")["net_ann"]
+                / sub[(sub.segment == seg)].set_index("cost_bps")["gross_ann"]
+                for seg in ("train", "valid", "test")
+            }
+        ).reindex(order)
+        print(f"\n  调仓周期 = 每 {rb} 个交易日")
+        print(ratio.to_string(float_format=lambda v: f"{v:.3f}"))
     print(f"\n结果已写：{args.out}\n           {sens_path}")
     return 0
 
