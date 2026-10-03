@@ -68,6 +68,10 @@ TESTS = [
     "Xclose >= (Xhigh + Xlow) / 2)",
     # 13) 回归：MAX 常量 + 内层 TS_MAX 滚动语义不能混
     "MAX(0, TS_MAX(Xclose, 20) - Xclose)",
+    # 14) 单参 ZSCORE 是横截面标准化（factor_calculator 的 OPERATIONS_DOC 明写）
+    "ZSCORE(TS_ZSCORE(TS_STD(Xreturn, 20) - TS_STD(Xreturn, 60), 60) * TS_SKEW(Xreturn, 20))",
+    # 15) 回归：双参仍是时序滚动 z-score，不能被 14) 的截面分支吃掉
+    "ZSCORE(Xclose, 20)",
 ]
 
 # 截面排名占位符的剥离（去掉外层括号，必须平衡）
@@ -81,7 +85,15 @@ for raw in (
     balanced = stripped.count("(") == stripped.count(")")
     assert balanced, f"括号不平衡: {raw} -> {stripped}"
     assert "__CSRANK__" not in stripped, f"占位符没剥干净: {raw} -> {stripped}"
-lines = ["# _strip_csrank 平衡性/剥净测试通过"]
+
+# 截面 z-score 占位符的剥离同样必须平衡、剥净
+_strip_z = ns["_strip_csz"]
+for raw in ("__CSZ__(Std(Xreturn, 20) - Std(Xreturn, 60))",
+            "Abs(__CSZ__(Xclose)) + 1"):
+    z = _strip_z(raw)
+    assert z.count("(") == z.count(")"), f"括号不平衡: {raw} -> {z}"
+    assert "__CSZ__" not in z, f"占位符没剥干净: {raw} -> {z}"
+lines = ["# _strip_csrank / _strip_csz 平衡性/剥净测试通过"]
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 for idx, t in enumerate(TESTS):
     print(f"[progress] test {idx + 1}/{len(TESTS)} ...", flush=True)

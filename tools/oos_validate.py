@@ -88,6 +88,9 @@ def _ts_to_camel(name: str) -> str:
 # 两者语义完全不同。裸 RANK(x) 必须走截面口径，这里先降级成占位符，算完再后处理（见 _csrank_postprocess）。
 _CSRANK_MARK = "__CSRANK__"
 
+# 单参 ZSCORE(x) 是横截面 z-score（同理需要先按日分组再标准化），占位符留到后处理
+_CSZ_MARK = "__CSZ__"
+
 
 def _match_paren(s: str, i: int) -> int:
     """s[i] 是 '(' 时返回配对的 ')' 下标，无括号返回 -1。"""
@@ -129,11 +132,19 @@ def _as_int(s: str):
 
 
 def _r_zscore(inner: str) -> str:
-    """TS_ZSCORE(x, N) / ZSCORE(x, N) -> (x - Mean(x,N)) / (Std(x,N) + 1e-8)；无窗口走全样本。"""
+    """TS_ZSCORE(x, N) -> 时序滚动 z-score (x - Mean(x,N)) / (Std(x,N) + 1e-8)。
+
+    ZSCORE(x) 单参时是**横截面** z-score（见 backtest/factor_calculator.py 的
+    OPERATIONS_DOC："ZSCORE(A): Z-score of each element in the cross-sectional
+    dimension of A"）。之前按时序单行处理会退化成 Mean(x) 单参，
+    qlib 直接 "Mean.__init__() missing 1 required positional argument: 'N'" 崩掉，
+    整条因子（本轮最优的 Vol_Skew_Divergence_2）就再没被独立复算过。
+    这里降级成占位符，算完再按日分组做截面标准化（见 _csz_postprocess）。
+    """
     a = _split_top_args(inner)
     if len(a) >= 2 and _as_int(a[1]) is not None:
         return f"(({a[0]} - Mean({a[0]}, {a[1]})) / (Std({a[0]}, {a[1]}) + 1e-8))"
-    return f"(({a[0]} - Mean({a[0]})) / (Std({a[0]}) + 1e-8))"
+    return f"{_CSZ_MARK}({a[0]})"
 
 
 def _r_pctchange(inner: str) -> str:
@@ -492,17 +503,45 @@ def _csrank_postprocess(s: pd.Series, dt_level: int = 0) -> pd.Series:
     这里严格照做（pandas 的 rank 默认跳过 NaN，与平台一致）。
     """
     if dt_level >= 0:
-        idx = s.index if not isinstance(s.index, pd.MultiIndex) else None
         if isinstance(s.index, pd.MultiIndex) and dt_level < s.index.nlevels:
             return s.groupby(level=dt_level).rank(pct=True)
     return s.rank(pct=True)
+
+
+def _csz_postprocess(s: pd.Series, dt_level: int = 0) -> pd.Series:
+    """把 __CSZ__(x) 的占位符替换成真正的日截面 z-score：(x - 当日均值) / (当日标准差 + eps)。
+
+    平台口径见 backtest/factor_calculator.py 的 OPERATIONS_DOC：单参 ZSCORE(A)
+    是横截面维度上的标准化，不是时序滚动。
+    """
+    if isinstance(s.index, pd.MultiIndex) and 0 <= dt_level < s.index.nlevels:
+        g = s.groupby(level=dt_level)
+        return (s - g.transform("mean")) / (g.transform("std") + 1e-8)
+    return (s - s.mean()) / (s.std() + 1e-8)
+
+
+def _strip_csz(expr: str) -> str:
+    """把 __CSZ__(x) 还原成 x（平衡去掉外层括号，理由同 _strip_csrank）。"""
+    out = expr
+    while _CSZ_MARK in out:
+        i = out.index(f"{_CSZ_MARK}(")
+        start = i + len(_CSZ_MARK) + 1
+        depth, j = 1, start
+        while j < len(out) and depth:
+            if out[j] == "(":
+                depth += 1
+            elif out[j] == ")":
+                depth -= 1
+            j += 1
+        out = out[:i] + out[start : j - 1] + out[j:]
+    return out
 
 
 def unsupported_operators(expr: str, known: set[str]) -> list[str]:
     """找出表达式里 qlib 引擎不认识的算子名（用于提前跳过，避免整批 D.features 崩掉）。"""
     # __CSRANK__ 只是截面排名的占位符（后面会平衡剥离），不能算未注册算子，
     # 否则所有用裸 RANK(...) 的因子都会被判"不可复算"跳过 —— 池子里就有十几个。
-    ops = {m for m in _CALL_RE.findall(expr)} - {"Feature", "PFeature", _CSRANK_MARK}
+    ops = {m for m in _CALL_RE.findall(expr)} - {"Feature", "PFeature", _CSRANK_MARK, _CSZ_MARK}
     return sorted(o for o in ops if o not in known)
 
 
@@ -726,10 +765,11 @@ def main() -> int:
     dt_level_hint = None
     series_list, ok_names = [], []
     for name, expr, raw_expr in zip(names, exprs, [f["expression"] for f in factors]):
-        # 截面排名没法塞进 qlib 表达式（qlib 的 Rank 是时序滚动），
-        # 所以把 __CSRANK__(x) 先还原成 x 算值，再按日分组做 rank(pct=True)。
+        # 截面排名/截面标准化都没法塞进 qlib 表达式（qlib 的 Rank 是时序滚动），
+        # 所以先把占位符还原成 x 算值，再按日分组做 rank(pct=True) / z-score。
         need_csrank = _CSRANK_MARK in expr
-        qlib_expr = _strip_csrank(expr) if need_csrank else expr
+        need_csz = _CSZ_MARK in expr
+        qlib_expr = _strip_csrank(_strip_csz(expr))
         try:
             s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
             # 必须在后处理之前定层：首个截面因子算完就定，晚一步会拿到 None，
@@ -738,6 +778,8 @@ def main() -> int:
                 dt_level_hint = _detect_dt_level(s)
             if need_csrank:
                 s = _csrank_postprocess(s, dt_level=dt_level_hint)
+            if need_csz:
+                s = _csz_postprocess(s, dt_level=dt_level_hint)
             s.name = name
             series_list.append(s)
             ok_names.append(name)
