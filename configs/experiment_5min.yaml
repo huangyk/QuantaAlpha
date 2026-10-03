@@ -1,6 +1,11 @@
 # ============================================================
 # QuantaAlpha 分钟级（5min）挖掘配置
 #
+# ⚠ 必须配合环境变量启动，本文件里的 backtest.qlib.config_name 对 mine 无效：
+#     QUANTAALPHA_BACKTEST_CONF=conf_5min_nextday.yaml
+#   原因：quantaalpha/factors/runner.py:166 只用这个环境变量决定 workflow 模板，
+#   取不到就回落到日频 conf_baseline.yaml —— 那样会在日频数据上跑分钟级因子。
+#
 # 与 configs/experiment_cont.yaml 的差异：
 #   backtest.qlib.config_name : conf_baseline.yaml -> conf_5min_nextday.yaml
 #   evolution.fresh_start     : false -> true（全新一轮，不继承日频轨迹池）
