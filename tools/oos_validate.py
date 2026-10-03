@@ -850,6 +850,22 @@ def main() -> int:
             ric = ric_all[(ric_all.index >= pd.Timestamp(s)) & (ric_all.index <= pd.Timestamp(e))]
             row[f"ric_{seg}"] = float(ric.mean()) if not ric.empty else float("nan")
             row[f"icir_{seg}"] = icir(ric)
+
+        # 符号/稳定性判定：abs(RankIC) 大但符号为负、且三段同号 => 信号是真的，只是写反了。
+        # 这条判据是 2026-10-04 实测挖出来的：Top-15 里 6 条"波动族"全部三段同号负
+        # （F2 -0.032 / F11 -0.027 / F4 -0.023 / F9 -0.022 / F14 -0.021），
+        # 只看绝对值会当成噪声丢掉。取负后即为正向因子。
+        seg_vals = [row.get(f"ric_{s}", float("nan")) for s, _, _ in segments]
+        finite = [v for v in seg_vals if v == v]
+        if len(finite) >= 2 and all(v > 0 for v in finite) or (
+            len(finite) >= 2 and all(v < 0 for v in finite)
+        ):
+            row["seg_consistent"] = "yes"
+            row["flip_hint"] = "建议取负" if row["ric_all"] < 0 else "方向正确"
+        else:
+            row["seg_consistent"] = "no"
+            row["flip_hint"] = ""
+        row["abs_ric_all"] = abs(row["ric_all"])
         summary.append(row)
         # 关联回轨迹 RankIC
         idx = int(name.split("_")[0][1:])
@@ -909,8 +925,13 @@ def main() -> int:
     print("\n" + "=" * 96)
     print(f"样本外复验（horizon={args.horizon}, topk={args.topk}, cost={args.cost_bps}bps单边）")
     print("=" * 96)
-    show = summ_df[["factor", "phase", "traj_rank_ic", "ric_all", "icir_all", "ric_train", "ric_valid", "ric_test"]]
+    show = summ_df[["factor", "phase", "traj_rank_ic", "ric_all", "icir_all", "ric_train", "ric_valid", "ric_test", "seg_consistent", "flip_hint"]]
     print(show.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+    bad = summ_df[summ_df["seg_consistent"] == "yes"]
+    if len(bad):
+        print("\n【符号/稳定性】三段同号的因子（信号是真的，只是方向要对）:")
+        for _, r in bad.iterrows():
+            print(f"  {r['factor']:<45} ric={r['ric_all']:+.4f}  {r['flip_hint']}")
     print("\n衰减比 test/train:")
     for _, r in summ_df.iterrows():
         if r["ric_train"] and not pd.isna(r["ric_train"]) and r["ric_train"] != 0:
