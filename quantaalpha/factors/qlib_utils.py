@@ -50,6 +50,19 @@ def generate_data_folder_from_qlib(use_local: bool = True):
                 f"5min 价量数据缺失: {daily_pv_all}\n"
                 f"请先生成：python tools/gen_pv_5min.py"
             )
+        # 安全阀：把 217MB 的 5min h5 写进日频 debug 目录是不可逆的破坏
+        # （日频挖掘会静默算在分钟数据上，症状极难定位）。必须显式指定 5min 专用目录。
+        for name, folder in (
+            ("FACTOR_CoSTEER_DATA_FOLDER", FACTOR_COSTEER_SETTINGS.data_folder),
+            ("FACTOR_CoSTEER_DATA_FOLDER_DEBUG", FACTOR_COSTEER_SETTINGS.data_folder_debug),
+        ):
+            if "5min" not in str(folder).lower():
+                raise ValueError(
+                    f"QUANTAALPHA_FACTOR_FREQ=5min 时 {name} 必须指向 5min 专用目录，"
+                    f"当前是 {folder!r}。请设置：\n"
+                    f"  {name}=git_ignore_folder/factor_implementation_source_data_5min\n"
+                    f"（日频目录必须保持日频数据，不能混用）"
+                )
         logger.info(f"Factor source data freq=5min -> {daily_pv_all.name}")
         _copy_to_data_folders(daily_pv_all, template_path)
         return
@@ -99,7 +112,11 @@ def _copy_to_data_folders(src_h5: Path, template_path: Path, debug_src: Path | N
     ):
         dest = Path(folder)
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy(h5_src, dest / "daily_pv.h5")
+        # h5 200MB+，大小一致就不重复拷（同一轮多次进入这个函数的场景）
+        dst_h5 = dest / "daily_pv.h5"
+        if not dst_h5.exists() or dst_h5.stat().st_size != h5_src.stat().st_size:
+            shutil.copy(h5_src, dst_h5)
+        # README 很小，每次覆盖，保证 LLM 拿到的是当前频率的说明
         shutil.copy(readme_src, dest / "README.md")
         logger.info(f"Factor source data -> {dest} ({h5_src.name}, {readme_src.name})")
 
@@ -200,9 +217,17 @@ def get_data_folder_intro(
             The description of the data folder.
     """
 
+    # 原判断只看"目录是否存在"，导致目录里已有 h5 但 README 缺失/版本不对时
+    # 不会触发同步 —— 实测后果：5min 数据到位了，但 LLM 读到的还是日频 README，
+    # 于是因子名写成 10D/20D/5D、窗口按日频直觉取，语义全错。
+    # 注意 LLM 看到的是 **debug 目录** 的说明（下面 iterdir 用的是 data_folder_debug）。
+    df_main = Path(FACTOR_COSTEER_SETTINGS.data_folder)
+    df_debug = Path(FACTOR_COSTEER_SETTINGS.data_folder_debug)
     if (
-        not Path(FACTOR_COSTEER_SETTINGS.data_folder).exists()
-        or not Path(FACTOR_COSTEER_SETTINGS.data_folder_debug).exists()
+        not df_main.exists()
+        or not df_debug.exists()
+        or not (df_main / "daily_pv.h5").exists()
+        or not (df_debug / "README.md").exists()
     ):
         # FIXME: (xiao) I think this is writing in a hard-coded way.
         # get data folder intro does not imply that we are generating the data folder.
