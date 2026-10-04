@@ -788,12 +788,25 @@ def main() -> int:
         default="day",
         help="K 线频率：day 或 5min。5min 时必须指向分钟数据集，且 --market 用 liquid500（all=5364只×8688根太慢）",
     )
-    ap.add_argument("--train-start", default="2020-01-01")
+    ap.add_argument("--train-start", default="2020-01-01", help="因子计算起点（同时进缓存键，慎改）")
     ap.add_argument("--train-end", default="2023-12-31")
     ap.add_argument("--valid-start", default="2024-01-01")
     ap.add_argument("--valid-end", default="2024-12-31")
     ap.add_argument("--test-start", default="2025-01-01")
     ap.add_argument("--test-end", default="2026-08-18")
+    # ---- 分段边界的独立覆写 ----
+    # 为什么需要这一组：--train-start/--test-end 同时被当作「因子计算区间」和「分段区间」用。
+    # 在 5min 数据集上这个复用会把三段切坏 —— cn_5m_full 的日历只有 2026-01-05~2026-09-30，
+    # 于是 train(2020-2023)/valid(2024) 一段数据都没有，ric_train/ric_valid 全 NaN，
+    # 「三段同号」判据对所有因子失效（2026-10-04 方向 D 复验实测复现）。
+    # 因此把「算多久」和「怎么切」拆开：分段用下面这组，因子计算仍用上面的。
+    for _flag, _help in (
+        ("--seg-train-end", "分段：train 段末（默认随 freq 自适应）"),
+        ("--seg-valid-start", "分段：valid 段起"),
+        ("--seg-valid-end", "分段：valid 段末"),
+        ("--seg-test-start", "分段：test 段起"),
+    ):
+        ap.add_argument(_flag, default=None, help=_help)
     ap.add_argument("--horizon", type=int, default=1, help="前瞻期（交易日），1=次日收益")
     ap.add_argument("--topk", type=int, default=50)
     ap.add_argument(
@@ -940,11 +953,24 @@ def main() -> int:
     )
 
     # ---- 分段统计 ----
+    # 5min 数据集只有 2026 年前三季度，沿用日线的 2020 起点会让 train/valid 全空；
+    # 这里按 freq 给一套能真正切出三段的分界，可用 --seg-* 显式覆写。
+    if args.freq == "5min":
+        seg_train_end = args.seg_train_end or "2026-05-31"
+        seg_valid_start = args.seg_valid_start or "2026-06-01"
+        seg_valid_end = args.seg_valid_end or "2026-06-30"
+        seg_test_start = args.seg_test_start or "2026-07-01"
+    else:
+        seg_train_end = args.seg_train_end or args.train_end
+        seg_valid_start = args.seg_valid_start or args.valid_start
+        seg_valid_end = args.seg_valid_end or args.valid_end
+        seg_test_start = args.seg_test_start or args.test_start
     segments = [
-        ("train", args.train_start, args.train_end),
-        ("valid", args.valid_start, args.valid_end),
-        ("test", args.test_start, args.test_end),
+        ("train", args.train_start, seg_train_end),
+        ("valid", seg_valid_start, seg_valid_end),
+        ("test", seg_test_start, args.test_end),
     ]
+    logger.info("分段：%s", [f"{n}({s}~{e})" for n, s, e in segments])
 
     summary = []
     per_day_ric = {}
