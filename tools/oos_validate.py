@@ -573,8 +573,18 @@ def is_qlib_compatible(expr: str, known: set[str]) -> bool:
     return not unsupported_operators(expr, known)
 
 
-def load_top_factors(pool_path: str, k: int, known: set[str]) -> tuple[list[dict], int]:
-    """从轨迹池里按 RankIC 取前 k 条轨迹，返回其全部因子（按表达式去重）。"""
+def load_top_factors(
+    pool_path: str, k: int, known: set[str], include_no_ric: bool = False
+) -> tuple[list[dict], int]:
+    """从轨迹池里按 RankIC 取前 k 条轨迹，返回其全部因子（按表达式去重）。
+
+    include_no_ric=True 时，RankIC 为 None 的轨迹也纳入（排在最末）。
+    用途：read_exp_res.py 的校验若误杀过一批结果（见 commit 87d7bf7），
+    轨迹池里会是一整池 RankIC=None，但因子表达式是完整可用的 ——
+    这时复验正是唯一能把指标捞回来的手段。
+    """
+    import math
+
     with open(pool_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -583,13 +593,16 @@ def load_top_factors(pool_path: str, k: int, known: set[str]) -> tuple[list[dict
         metrics = t.get("backtest_metrics") or {}
         ric = metrics.get("RankIC")
         if ric is None:
-            continue
+            if not include_no_ric:
+                continue
+            ric = float("nan")
         per_traj.append((float(ric), tid, t.get("phase"), t.get("factors") or []))
 
-    per_traj.sort(key=lambda x: -x[0])
+    # NaN 排最后
+    per_traj.sort(key=lambda x: -(x[0] if not math.isnan(x[0]) else -9e9))
 
     out, seen, skipped = [], set(), 0
-    for ric, tid, phase, factors in per_traj[:k]:
+    for ric, tid, phase, factors in (per_traj if include_no_ric else per_traj[:k]):
         for f in factors:
             expr = (f.get("expression") or "").strip()
             if not expr or expr in seen:
@@ -726,6 +739,11 @@ def main() -> int:
     ap.add_argument("--k", type=int, default=3, help="取 RankIC 最高的前 k 条轨迹")
     ap.add_argument("--qlib-dir", default=os.environ.get("QLIB_DATA_DIR", DEFAULT_QLIB_DIR))
     ap.add_argument("--market", default="all", help="qlib instruments")
+    ap.add_argument(
+        "--freq",
+        default="day",
+        help="K 线频率：day 或 5min。5min 时必须指向分钟数据集，且 --market 用 liquid500（all=5364只×8688根太慢）",
+    )
     ap.add_argument("--train-start", default="2020-01-01")
     ap.add_argument("--train-end", default="2023-12-31")
     ap.add_argument("--valid-start", default="2024-01-01")
@@ -737,6 +755,11 @@ def main() -> int:
     ap.add_argument(
         "--rebalance", type=int, default=1,
         help="调仓周期（交易日）：1=日频、5=每周、10=每两周。降频是这套因子落地的关键变量",
+    )
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="忽略 RankIC 排序，复验池里所有因子（轨迹池 RankIC 全为 None 时用这个）",
     )
     ap.add_argument("--cost-bps", type=float, default=5.0, help="单边成本（基点），A股双边常见 5~10")
     ap.add_argument("--out", default="data/results/oos_validate.csv")
@@ -756,12 +779,29 @@ def main() -> int:
 
     # 注意：本项目 qlib 被 patch 过，list_instruments 不直接收 market 参数，
     # 必须先 D.instruments(market) 拿到 instruments 对象再传（见 backtest/runner.py:591）。
-    codes = D.list_instruments(D.instruments(args.market), start_time=start, end_time=end, as_list=True)
-    logger.info("instruments=%d, provider=%s", len(codes), args.qlib_dir)
+    # D.instruments(market) 默认按 freq=day 解析，在只有 calendars/5min.txt 的分钟数据集上
+    # 会抛 "does not contain data for day"（与 tools/gen_pv_5min.py 里遇到的是同一个坑）。
+    # 兜底：直接读 instruments/<market>.txt 的第一列。
+    try:
+        codes = D.list_instruments(
+            D.instruments(args.market), start_time=start, end_time=end, as_list=True
+        )
+    except Exception as exc:
+        inst_file = Path(args.qlib_dir).expanduser() / "instruments" / f"{args.market}.txt"
+        if not inst_file.exists():
+            raise RuntimeError(f"取不到 instruments（{exc}），且找不到 {inst_file}") from exc
+        codes = [ln.split()[0] for ln in inst_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        logger.info("instruments 走文件兜底: %s (%d 只)", inst_file, len(codes))
+    logger.info("instruments=%d, provider=%s, freq=%s", len(codes), args.qlib_dir, args.freq)
 
-    factors, skipped = load_top_factors(args.pool, args.k, known_ops)
+    factors, skipped = load_top_factors(
+        args.pool, args.k, known_ops, include_no_ric=args.all
+    )
     if not factors:
-        logger.error("池里没有带 RankIC 的轨迹，或字段格式不匹配")
+        logger.error(
+            "池里没有可用因子，或字段格式不匹配。"
+            "若轨迹池里 RankIC 全是 None，加 --all 忽略排序直接复验所有因子"
+        )
         return 2
     logger.info(
         "载入 %d 个待复验因子（来自 RankIC top-%d 轨迹）%s",
@@ -787,7 +827,7 @@ def main() -> int:
         need_csz = _CSZ_MARK in expr
         qlib_expr = _strip_csrank(_strip_csz(expr))
         try:
-            s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
+            s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq=args.freq).iloc[:, 0]
             # 必须在后处理之前定层：首个截面因子算完就定，晚一步会拿到 None，
             # 而 groupby(level=None) 会把所有日期并成一组，截面排名直接算错。
             if dt_level_hint is None:
@@ -816,7 +856,7 @@ def main() -> int:
     # 实测会把 RankIC 抬高约 60%（同一因子 0.0174 vs 0.0281），且对短周期因子
     # 会放大到符号反转，复验结论完全不可比。
     fwd_expr = f"Ref($close, -{args.horizon + 1}) / Ref($close, -{args.horizon}) - 1"
-    fwd = D.features(codes, [fwd_expr], start_time=start, end_time=end, freq="day").iloc[:, 0]
+    fwd = D.features(codes, [fwd_expr], start_time=start, end_time=end, freq=args.freq).iloc[:, 0]
     fwd.name = "fwd"
     logger.info("fwd shape=%s", fwd.shape)
 
