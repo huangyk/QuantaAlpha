@@ -43,8 +43,10 @@ evolution:
   parent_selection_strategy: best
   top_percent_threshold: 0.3
 
-  pool_path: "log/minute_trajectory_pool_smoke.json"
-  fresh_start: true
+  # 通用池名：多个方向的挖掘轮次累积到同一个池，进化器才能跨方向做 crossover。
+  # fresh_start=false —— 换方向时保留已有轨迹，而不是推倒重来。
+  pool_path: "log/minute_trajectory_pool_5m.json"
+  fresh_start: false
 
   cleanup_on_finish: false
 
