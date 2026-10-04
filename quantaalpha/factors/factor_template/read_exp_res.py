@@ -46,10 +46,23 @@ anchor_ms = int(anchor_path.stat().st_mtime * 1000) if anchor_path.exists() else
 
 
 def _ms(info, key):
+    """recorder.info 里的时间有两种形态，都得认：
+      - 毫秒时间戳（int/float）
+      - **字符串** '2026-10-04 05:32:11'（本机 qlib 版本就是这种）
+
+    2026-10-04 踩的坑：只按 int 处理，字符串 int() 抛 ValueError 被吞成 0，
+    于是所有 recorder 都被判为「no valid end_time」而跳过 —— 9 条轨迹全部
+    RankIC=None（successful=0），而指标其实已经算出来了（日志里能看到
+    Rank IC=0.0454）。**校验写错比不校验更糟：它会把真结果变成失败。**
+    """
     v = info.get(key)
+    if v is None:
+        return 0
+    if isinstance(v, (int, float)):
+        return int(v)
     try:
-        return int(v) if v is not None else 0
-    except (TypeError, ValueError):
+        return int(pd.to_datetime(str(v)).timestamp() * 1000)
+    except Exception:
         return 0
 
 
