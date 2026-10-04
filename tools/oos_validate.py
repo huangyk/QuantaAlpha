@@ -524,6 +524,50 @@ def _csrank_postprocess(s: pd.Series, dt_level: int = 0) -> pd.Series:
     return s.rank(pct=True)
 
 
+# ---------------------------------------------------------------- factor cache
+# 复验的主要开销是 D.features：29 个因子 × 500 只 × 8640 根 5min K 线实测约 30 分钟，
+# 而每轮挖掘结束都要重跑一次全量复验 —— 已算过的因子会被反复重算。
+# 这里按 (provider, freq, 起止, 归一化表达式) 做磁盘级缓存，跨轮次复用。
+def _cache_key(qlib_dir: str, freq: str, start: str, end: str, expr: str) -> str:
+    import hashlib
+
+    raw = f"{qlib_dir}|{freq}|{start}|{end}|{expr}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _cache_path(cache_dir: Path, key: str) -> Path:
+    return cache_dir / f"{key}.parquet"
+
+
+def _cache_load(cache_dir: Path | None, key: str) -> pd.Series | None:
+    """读缓存；缺文件 / 损坏都返回 None（当作未命中），绝不因缓存问题中断复验。"""
+    if cache_dir is None:
+        return None
+    p = _cache_path(cache_dir, key)
+    if not p.exists():
+        return None
+    try:
+        df = pd.read_parquet(p)
+        if df.empty:
+            return None
+        s = df.iloc[:, 0]
+        s.name = None  # 名字由调用方统一赋，避免陈旧串混进输出
+        return s
+    except Exception as exc:  # noqa: BLE001 - 缓存损坏不是错误，退化为重算即可
+        logger.warning("因子缓存读取失败（退化为重算）：%s | %s", exc, p.name)
+        return None
+
+
+def _cache_store(cache_dir: Path | None, key: str, s: pd.Series) -> None:
+    if cache_dir is None:
+        return
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        s.to_frame().to_parquet(_cache_path(cache_dir, key), index=True)
+    except Exception as exc:  # noqa: BLE001 - 写缓存失败不能拖垮主流程
+        logger.warning("因子缓存写入失败（不影响复验）：%s", exc)
+
+
 def _csz_postprocess(s: pd.Series, dt_level: int = 0) -> pd.Series:
     """把 __CSZ__(x) 的占位符替换成真正的日截面 z-score：(x - 当日均值) / (当日标准差 + eps)。
 
@@ -762,6 +806,11 @@ def main() -> int:
         help="忽略 RankIC 排序，复验池里所有因子（轨迹池 RankIC 全为 None 时用这个）",
     )
     ap.add_argument("--cost-bps", type=float, default=5.0, help="单边成本（基点），A股双边常见 5~10")
+    ap.add_argument(
+        "--cache-dir",
+        default=os.environ.get("OOSV_CACHE_DIR", "git_ignore_folder/oos_factor_cache"),
+        help="因子值磁盘缓存目录；传空串关闭。同一 provider/freq/表达式跨轮次复用",
+    )
     ap.add_argument("--out", default="data/results/oos_validate.csv")
     args = ap.parse_args()
 
@@ -819,15 +868,31 @@ def main() -> int:
     # series_list 是 main() 的局部变量，在赋值前引用会直接 UnboundLocalError，
     # `if series_list` 这种守卫也救不了。只能在循环里拿首个成功的 series 现算。
     dt_level_hint = None
-    series_list, ok_names = [], []
+    series_list, ok_names, cached_names = [], [], []
+    cache_dir = Path(args.cache_dir) if args.cache_dir else None
     for name, expr, raw_expr in zip(names, exprs, [f["expression"] for f in factors]):
         # 截面排名/截面标准化都没法塞进 qlib 表达式（qlib 的 Rank 是时序滚动），
         # 所以先把占位符还原成 x 算值，再按日分组做 rank(pct=True) / z-score。
         need_csrank = _CSRANK_MARK in expr
         need_csz = _CSZ_MARK in expr
         qlib_expr = _strip_csrank(_strip_csz(expr))
+        ckey = _cache_key(args.qlib_dir, args.freq, start, end, qlib_expr)
+        s = _cache_load(cache_dir, ckey)
+        if s is not None and s.empty:
+            s = None
+        cached = s is not None
+        if not cached:
+            try:
+                s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq=args.freq).iloc[:, 0]
+            except Exception as exc:  # noqa: BLE001 - 复算失败要如实记录而不是中断整批
+                logger.warning("因子 %s 复算失败（跳过）：%s", name, exc)
+                s = None
+            if s is not None:
+                _cache_store(cache_dir, ckey, s)
+        if s is None:
+            continue
         try:
-            s = D.features(codes, [qlib_expr], start_time=start, end_time=end, freq=args.freq).iloc[:, 0]
+            s = s.rename(None)
             # 必须在后处理之前定层：首个截面因子算完就定，晚一步会拿到 None，
             # 而 groupby(level=None) 会把所有日期并成一组，截面排名直接算错。
             if dt_level_hint is None:
@@ -839,8 +904,15 @@ def main() -> int:
             s.name = name
             series_list.append(s)
             ok_names.append(name)
+            if cached:
+                cached_names.append(name)
         except Exception as exc:  # noqa: BLE001 - 复算失败要如实记录而不是中断整批
-            logger.warning("因子 %s 复算失败（跳过）：%s", name, exc)
+            logger.warning("因子 %s 后处理失败（跳过）：%s", name, exc)
+    n_cached = sum(1 for ok in ok_names if ok in cached_names)
+    logger.info(
+        "因子值就绪 %d/%d（命中缓存 %d，新算 %d）",
+        len(series_list), len(exprs), n_cached, len(series_list) - n_cached,
+    )
     if not series_list:
         logger.error("没有任何因子能用 qlib 引擎复算，终止")
         return 3
