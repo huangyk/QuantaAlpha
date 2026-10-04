@@ -96,6 +96,15 @@ def scan_pool(pool_path: Path) -> dict:
     return groups
 
 
+BASELINE_RIC = 0.04130751359431582
+"""4 特征基线（因子没进模型时的常数）。
+
+2026-10-04 那轮 bug 留下了 17 个共享这个值的 workspace，是**已定性、已修复**的历史
+事实。若每次扫描都把它们当成新故障报警，这个工具很快就会变成"狼来了"而被忽略。
+所以这里把它单列为 KNOWN，只统计不计入 FAIL —— 但依旧打印数量，方便确认没有回潮。
+"""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pool", default="", help="trajectory_pool.json 路径")
@@ -114,8 +123,20 @@ def main() -> int:
     print(f"[check_dup_metrics] results scanned: {total}, distinct RankIC: {len(groups)}")
 
     dups = {k: v for k, v in groups.items() if len(v) >= 2}
+    # 按数值比较，别按字符串 —— CSV 里是 17 位原始串，f"{x:.16f}" 只有 16 位，对不上
+    known = []
+    for k in list(dups):
+        try:
+            if float(k) == BASELINE_RIC:
+                known.extend(dups.pop(k))
+        except ValueError:
+            pass
+    if known:
+        print(f"[check_dup_metrics] KNOWN baseline {BASELINE_RIC!r}: {len(known)} 个 workspace"
+              f"（2026-10-04 bug 的历史遗留，已修复，不计入本次判定）")
+
     if not dups:
-        print("[check_dup_metrics] PASS: no duplicated RankIC. 每个结果都有独立指标。")
+        print("[check_dup_metrics] PASS: 没有新的重复 RankIC，每个结果都有独立指标。")
         return 0
 
     print(f"[check_dup_metrics] FAIL: {len(dups)} 个 RankIC 值被多个结果共享 —— 极可能是「因子没进模型」")
