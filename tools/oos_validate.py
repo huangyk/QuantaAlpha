@@ -721,6 +721,28 @@ def icir(ic: pd.Series, ann: int = 252) -> float:
     return float(ic.mean() / ic.std() * np.sqrt(ann))
 
 
+def to_daily_ic(ic: pd.Series) -> pd.Series:
+    """把 5min 截面 IC 折成「每日一个 IC」。
+
+    为什么必须折：相邻 5min bar 共享 47/48 根前瞻价格路径，同一天内的 48 个 IC
+    根本不是独立样本。直接对 5min IC 求标准误会把 n 当成几千，t 值虚高好几倍。
+    2026-10-04 实测：三段里 valid 只有 6 月（约 21 个交易日），其 IC 与 train 段
+    符号一致率 0.50 —— 恰好等于抛硬币。若不看 t 值，「三段同号」对小量级因子
+    就是在碰运气。真正的独立单位是**交易日**，因此先按日平均再算统计量。
+    """
+    if ic.empty:
+        return ic
+    return ic.groupby(ic.index.normalize()).mean()
+
+
+def ic_tstat(ic_day: pd.Series) -> float:
+    """日频 IC 序列的 t 值 = mean / (std / sqrt(n))，n = 交易日数。"""
+    n = len(ic_day)
+    if n < 3 or ic_day.std() == 0:
+        return float("nan")
+    return float(ic_day.mean() / (ic_day.std() / np.sqrt(n)))
+
+
 def topk_equity_curve(
     df: pd.DataFrame, factor_col: str, fwd_col: str, topk: int, cost_bps: float,
     dt_level: int = 0, ins_level: int = 1, rebalance: int = 1,
@@ -983,11 +1005,18 @@ def main() -> int:
         row["ric_all"] = float(ric_all.mean()) if not ric_all.empty else float("nan")
         row["icir_all"] = icir(ric_all)
         per_day_ric[name] = ric_all
+        # 日频 IC 才是独立样本序列（见 to_daily_ic 的说明），t 值一律基于它算
+        ric_day = to_daily_ic(ric_all)
+        row["n_days"] = int(len(ric_day))
+        row["t_all"] = ic_tstat(ric_day)
         for seg, s, e in segments:
             # index 是 datetime，配置的段边界是字符串，必须统一成 Timestamp 再切
             ric = ric_all[(ric_all.index >= pd.Timestamp(s)) & (ric_all.index <= pd.Timestamp(e))]
             row[f"ric_{seg}"] = float(ric.mean()) if not ric.empty else float("nan")
             row[f"icir_{seg}"] = icir(ric)
+            ric_d = ric_day[(ric_day.index >= pd.Timestamp(s)) & (ric_day.index <= pd.Timestamp(e))]
+            row[f"n_{seg}"] = int(len(ric_d))
+            row[f"t_{seg}"] = ic_tstat(ric_d)
 
         # 符号/稳定性判定：abs(RankIC) 大但符号为负、且三段同号 => 信号是真的，只是写反了。
         # 这条判据是 2026-10-04 实测挖出来的：Top-15 里 6 条"波动族"全部三段同号负
@@ -1003,6 +1032,10 @@ def main() -> int:
         else:
             row["seg_consistent"] = "no"
             row["flip_hint"] = ""
+        # 显著性：|t| >= 2 才算「这段的 IC 不是噪声」。
+        # 三段同号只是必要条件 —— 实测 valid 段与 train 段符号一致率 0.50（=抛硬币），
+        # 量级小的因子靠符号一致过关纯属运气，必须再看 t。
+        row["significant"] = "yes" if abs(row.get("t_all", float("nan"))) >= 2 else "no"
         row["abs_ric_all"] = abs(row["ric_all"])
         summary.append(row)
         # 关联回轨迹 RankIC
