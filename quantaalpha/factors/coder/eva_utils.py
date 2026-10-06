@@ -574,7 +574,13 @@ class FactorFinalDecisionEvaluator(FactorEvaluator):
                 return final_decision, final_feedback
 
             except json.JSONDecodeError as e:
-                raise ValueError("Failed to decode JSON response from API.") from e
+                # 偶发：LLM 可能返回空串/非 JSON（本次 2026-10-06 方向 F 因此整进程崩溃）。
+                # 改为重试（关缓存换种子）最多 max_attempts 次，不冒泡崩溃整个挖掘。
+                # 仍失败才如实抛出，交上层决定兜底策略。
+                attempts += 1
+                if attempts >= max_attempts:
+                    raise ValueError("Failed to decode JSON response from API.") from e
+                continue
             except KeyError as e:
                 attempts += 1
                 if attempts >= max_attempts:
