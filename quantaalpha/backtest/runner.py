@@ -640,6 +640,40 @@ class BacktestRunner:
                 except Exception as filter_err:
                     logger.warning(f"Price filter failed: {filter_err}")
                 
+                # 构造基准收益序列（按回测频率），绕过 qlib 账户报告对 day 日历的硬依赖。
+                # 根因：分钟级数据集（cn_5m_full）只有 5min 日历，没有 day 日历；
+                # qlib 的 PortfolioMetrics._cal_benchmark 对内建字符串基准会调
+                # get_higher_eq_freq_feature(freq="day")，因找不到可 resample 到 day 的频率而抛
+                # "can't find a freq ... that can resample to 1min"，导致整个组合回测块崩溃、
+                # 信号层 IC 出了但 P&L 出不来。
+                # 修复：直接传一个 pd.Series 收益序列作基准 —— _cal_benchmark 对 Series 走
+                # `isinstance(benchmark, pd.Series): return benchmark` 分支，跳过 day resample。
+                # 这里用可交易股票池的等权均值收益作为"市场"基准（liquid500 内无指数）。
+                bench_series = None
+                try:
+                    _bench_close = D.features(
+                        stock_list,
+                        ['$close'],
+                        start_time=backtest_config['start_time'],
+                        end_time=backtest_config['end_time'],
+                        freq=self.freq,
+                    )
+                    if isinstance(_bench_close, pd.DataFrame) and not _bench_close.empty:
+                        # 先按 instrument 沿时间算每只票的 step 收益，再按 datetime 跨股票取等权均值。
+                        # 注意：不能写成 groupby(level='datetime').transform(pct_change)，
+                        # 那是在同一时间戳内跨股票比相邻价格，得到的是乱数（均值≈1.5），
+                        # 会把 excess 拖成 -1.5/步的假崩盘。
+                        _stock_ret = _bench_close.groupby(level='instrument')['$close'].pct_change()
+                        bench_series = _stock_ret.groupby(level='datetime').mean().fillna(0)
+                        bench_series.name = 'bench'
+                        logger.info(
+                            f"  基准序列已构造：{len(bench_series)} 步，等权 {len(stock_list)} 只 @ {self.freq}"
+                        )
+                except Exception as _be:
+                    logger.warning(f"  基准序列构造失败（{_be}），回退到配置字符串基准")
+
+                _bench_arg = bench_series if bench_series is not None else backtest_config['benchmark']
+
                 portfolio_metric_dict, indicator_dict = qlib_backtest(
                     executor={
                         "class": "SimulatorExecutor",
@@ -666,9 +700,10 @@ class BacktestRunner:
                     start_time=backtest_config['start_time'],
                     end_time=backtest_config['end_time'],
                     account=backtest_config['account'],
-                    benchmark=backtest_config['benchmark'],
+                    benchmark=_bench_arg,
                     exchange_kwargs={
                         "codes": stock_list,
+                        "freq": self.freq,  # 交易所报价频率必须显式给，否则默认 day，分钟-only 数据集会报 "does not contain data for day"
                         **backtest_config['exchange_kwargs']
                     }
                 )
@@ -687,7 +722,7 @@ class BacktestRunner:
                         pm_key = next(iter(portfolio_metric_dict))
                 if pm_key:
                     report_df, positions_df = portfolio_metric_dict[pm_key]
-                    
+
                     if isinstance(report_df, pd.DataFrame) and 'return' in report_df.columns:
                         portfolio_return = report_df['return'].replace([np.inf, -np.inf], np.nan).fillna(0)
                         bench_return = report_df['bench'].replace([np.inf, -np.inf], np.nan).fillna(0) if 'bench' in report_df.columns else 0

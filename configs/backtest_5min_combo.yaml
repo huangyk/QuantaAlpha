@@ -6,8 +6,9 @@
 #      Ref($close, -49) / Ref($close, -1) - 1
 #      （原 backtest_5min.yaml 用 next-2-bar 短 horizon，不适合组合验证）
 #   2. experiment/recorder/output 改名，避免覆盖单因子回测结果。
-#   3. benchmark 仍是 SH600000 占位（指数 5min 仅 08-19 后有），
-#      IC/ICIR/年化/回撤不受影响，仅「相对基准超额」失真。
+#   3. benchmark：runner 现在用可交易股票池等权收益序列作基准（绕过 qlib 对 day 日历的硬依赖，
+#      minutes-only 数据集没有 day 日历，字符串基准会触发 "can't find a freq ... resample to 1min"）。
+#      config 里的 SH600000 仅作兜底（基准序列构造失败时才用），正常跑不会被使用。
 #
 # 用法：
 #   python -m quantaalpha.cli backtest -c configs/backtest_5min_combo.yaml \
@@ -35,6 +36,7 @@ factor_source:
 
 data:
   provider_uri: "D:/qqmt/qlib_data/cn_5m_full"
+  force_provider_uri: true   # 忽略环境变量 QLIB_DATA_DIR(=cn_real_full/day)，强制用本数据集的 5min
   region: "cn"
   freq: "5min"
   market: "liquid500"

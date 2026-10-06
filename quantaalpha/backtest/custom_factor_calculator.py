@@ -555,13 +555,19 @@ def get_qlib_stock_data(config: Dict) -> pd.DataFrame:
     from qlib.data import D
     
     data_config = config.get('data', {})
-    
-    # Prefer QLIB_DATA_DIR env (aligned with runner.py)
-    provider_uri = (
-        os.environ.get('QLIB_DATA_DIR')
-        or os.environ.get('QLIB_PROVIDER_URI')
-        or data_config.get('provider_uri', os.path.expanduser('~/.qlib/qlib_data/cn_data'))
-    )
+
+    # 与 runner._init_qlib 保持一致的解析优先级：
+    # 配置显式 force_provider_uri=true 时忽略环境变量（QLIB_DATA_DIR 默认是 cn_real_full/day），
+    # 否则回退到环境变量 / 配置 provider_uri。否则计算器会把全局 qlib 重新初始化成 day 数据集，
+    # 导致 5min 因子复算与后续 label/回测全部失败。
+    if data_config.get('force_provider_uri') and data_config.get('provider_uri'):
+        provider_uri = data_config['provider_uri']
+    else:
+        provider_uri = (
+            os.environ.get('QLIB_DATA_DIR')
+            or os.environ.get('QLIB_PROVIDER_URI')
+            or data_config.get('provider_uri', os.path.expanduser('~/.qlib/qlib_data/cn_data'))
+        )
     provider_uri = os.path.expanduser(provider_uri)
     region = data_config.get('region', 'cn')
     
