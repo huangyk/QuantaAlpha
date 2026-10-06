@@ -1,0 +1,131 @@
+######################################################################
+# 分钟级（5min）组合回测配置 —— 传统因子库 + 自挖验证因子 集成测试
+#
+# 与 backtest_5min.yaml 的差异：
+#   1. label 改为 48 根（1 交易日）horizon，对齐因子挖掘口径：
+#      Ref($close, -49) / Ref($close, -1) - 1
+#      （原 backtest_5min.yaml 用 next-2-bar 短 horizon，不适合组合验证）
+#   2. experiment/recorder/output 改名，避免覆盖单因子回测结果。
+#   3. benchmark 仍是 SH600000 占位（指数 5min 仅 08-19 后有），
+#      IC/ICIR/年化/回撤不受影响，仅「相对基准超额」失真。
+#
+# 用法：
+#   python -m quantaalpha.cli backtest -c configs/backtest_5min_combo.yaml \
+#     --factor-source custom --factor-json data/results/validated_factors_ensemble.json
+######################################################################
+
+random_seed: 42
+
+experiment:
+  name: "backtest_5min_combo"
+  recorder: "backtest_5min_combo_recorder"
+  output_dir: "data/results/backtest_5min_combo"
+  output_metrics_file: "backtest_metrics.json"
+
+factor_source:
+  type: "custom"
+  custom:
+    json_files: []
+    quality_filter: null
+    max_factors: null
+    use_llm_for_incompatible: false
+  combined:
+    official_source: "alpha158_20"
+    include_custom: true
+
+data:
+  provider_uri: "D:/qqmt/qlib_data/cn_5m_full"
+  region: "cn"
+  freq: "5min"
+  market: "liquid500"
+  start_time: "2026-01-05"
+  end_time: "2026-09-30"
+
+dataset:
+  # 对齐挖掘口径：持 48 根 = 1 交易日
+  label: "Ref($close, -49) / Ref($close, -1) - 1"
+
+  learn_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "DropnaLabel"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+
+  infer_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+
+  segments:
+    train: ["2026-01-05", "2026-05-31"]
+    valid: ["2026-06-01", "2026-07-31"]
+    test:  ["2026-08-01", "2026-09-30"]
+
+model:
+  type: "lgb"
+  params:
+    loss: "mse"
+    learning_rate: 0.05
+    max_depth: 8
+    num_leaves: 210
+    colsample_bytree: 0.8879
+    subsample: 0.8789
+    lambda_l1: 205.6999
+    lambda_l2: 580.9768
+    num_threads: 20
+    seed: 42
+    random_state: 42
+    early_stopping_round: 50
+    num_boost_round: 300
+    min_child_samples: 200
+    feature_fraction_bynode: 0.8
+
+backtest:
+  strategy:
+    class: "TopkDropoutStrategy"
+    module_path: "qlib.contrib.strategy"
+    kwargs:
+      signal: "<PRED>"
+      topk: 30
+      n_drop: 3
+
+  backtest:
+    start_time: "2026-08-01"
+    end_time: "2026-09-30"
+    account: 100000000
+    benchmark: "SH600000"
+    exchange_kwargs:
+      limit_threshold: 0.095
+      deal_price: "open"
+      open_cost: 0.0005
+      close_cost: 0.0015
+      min_cost: 5
+
+llm:
+  enabled: false
+  timeout: 300
+  max_retries: 3
+  cache_results: true
+  cache_dir: "data/results/factor_cache"
+  auto_extract_cache: false
+  debug: false
+
+factor_calculation:
+  output_dir: "data/results/computed_factors"
+  save_intermediate: true
+  n_jobs: 4
+  data_file: null
