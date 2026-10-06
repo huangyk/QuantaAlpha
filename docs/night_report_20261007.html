@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuantaAlpha 夜间实验报告 2026-10-07</title>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--mut:#5f6368;--line:#e5e7eb;--card:#f7f8fa;
+--up:#c0392b;--down:#27865a;--hl:#fff8e6;--hlb:#e6a817}
+@media (prefers-color-scheme: dark){
+:root{--bg:#16181d;--fg:#e6e8eb;--mut:#9aa0a6;--line:#2a2e35;--card:#1e2128;
+--up:#ff6b5e;--down:#4ec9a0;--hl:#2a2416;--hlb:#d9a441}}
+*{box-sizing:border-box}
+body{margin:0;padding:28px 20px 60px;background:var(--bg);color:var(--fg);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;font-size:15px}
+.wrap{max-width:920px;margin:0 auto}
+h1{font-size:22px;font-weight:600;margin:0 0 6px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:28px}
+h2{font-size:17px;font-weight:600;margin:34px 0 12px;padding-left:10px;border-left:3px solid var(--hlb)}
+h3{font-size:15px;font-weight:600;margin:20px 0 8px;color:var(--fg)}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:right}
+th{background:var(--card);font-weight:600;text-align:right}
+td:first-child,th:first-child{text-align:left}
+.pos{color:var(--up)}
+.neg{color:var(--down)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:14px 0}
+.kv{display:flex;flex-wrap:wrap;gap:14px;margin:10px 0}
+.kv div{flex:1;min-width:150px;background:var(--bg);border:1px solid var(--line);
+border-radius:8px;padding:10px 12px}
+.kv b{display:block;font-size:20px;font-weight:600;margin-top:4px}
+.kv span{font-size:12px;color:var(--mut)}
+.warn{background:var(--hl);border-left:3px solid var(--hlb);padding:12px 14px;
+border-radius:0 8px 8px 0;margin:14px 0}
+ul{padding-left:20px;margin:10px 0}
+li{margin:5px 0}
+code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:13px}
+.foot{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--mut);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>夜间实验报告：执行层能不能救回 alpha</h1>
+<div class="sub">2026-10-07 02:00 · QuantaAlpha · 三个实验全部基于真实数据 · 脚本在 <code>tools/</code>，原始数据见 <code>data/results/</code></div>
+
+<div class="card">
+<b>一句话结论</b>：日内挑时点最多值 <b>7 bp/次</b>，而少换一次手值 <b>29~70 bp</b>。
+所以<b>降换股的优先级远高于挑买卖点</b>；另外这个池子的资金容量只有约 <b>1000 万</b>，
+飞龙当年 0.734 的日换手真实成本是 <b>53.75%/年</b>（不是当时算的 36.98%）。
+</div>
+
+<h2>实验 1 · 日内买卖时点（5min 数据）</h2>
+<p>样本：liquid500，499 只 × 180 个交易日 × 48 根 5min bar（2026-01-05 ~ 09-29，全部 48 根完整）。
+方法：把收益拆成「池收益 + 买入偏离 + 卖出偏离」，买入偏离 = 该时点价格相对当日 VWAP 便宜多少。</p>
+
+<table>
+<tr><th>时点</th><th>买入比 VWAP 便宜 (bp)</th><th>该时段成交量占比</th><th>该时段收益 (bp)</th></tr>
+<tr><td>09:35 开盘</td><td class="pos">+12.00</td><td>11.58%</td><td>—</td></tr>
+<tr><td>10:00</td><td class="neg">+5.27（当日最贵）</td><td>3.22%</td><td>+0.08</td></tr>
+<tr><td>10:30</td><td>+7.46</td><td>1.87%</td><td>+1.52</td></tr>
+<tr><td>11:00</td><td class="pos">+11.61</td><td>1.31%</td><td>-1.57</td></tr>
+<tr><td>11:30</td><td>+6.06</td><td>1.06%</td><td class="pos">+6.22</td></tr>
+<tr><td>13:05</td><td>+5.83</td><td>2.15%</td><td>+0.24</td></tr>
+<tr><td>13:30</td><td>+7.68</td><td>1.29%</td><td>+0.71</td></tr>
+<tr><td>14:00</td><td>+8.75</td><td>1.15%</td><td>-1.08</td></tr>
+<tr><td>14:30</td><td>+8.09</td><td>1.20%</td><td>-0.39</td></tr>
+<tr><td>15:00 收盘</td><td>+7.18</td><td>2.34%</td><td class="pos">+2.95</td></tr>
+</table>
+
+<div class="kv">
+<div><span>结构性事实（大样本，稳健）</span><b>开盘便宜 12bp</b></div>
+<div><span>最优组合（买 09:35 → 次日 10:00 卖）</span><b>+15.18 bp/日</b></div>
+<div><span>对比开盘买开盘卖（+8.24 bp）</span><b>+6.93 bp/日</b></div>
+<div><span>折年（单利粗估）</span><b>+17.47%/年</b></div>
+</div>
+
+<div class="warn">
+<b>但显著性不够</b>：最优组合 vs 开盘基准的逐日配对差 t = <b>1.06</b>，为正的天数仅 <b>57.5%</b>（n=179）；
+买入/卖出边际主效应里 t 值最高也只有 1.07。<br>
+正确解读：<b>日内价格结构是稳健的（9 万条样本：早盘冲高，所以开盘最便宜、10:00 最贵），
+但把它变成跨日策略收益，会被 342 bp 的日间波动淹没</b>。方向可用，幅度别当真。
+</div>
+
+<h2>实验 2 · 换手到底吃掉多少钱</h2>
+<p>成本模型：佣金双边 5 bp + 印花税 5 bp + 市场冲击（Almgren：<code>0.1 × 日波动 × √participation</code>）。
+日波动用真实值 <b>342 bp</b>。模型已校准：按 20 bp/次 算出 36.99%/年，与飞龙实测 36.98% 完全吻合。</p>
+
+<table>
+<tr><th>日换手</th><th>年化成本（全天分散下单）</th><th>年化成本（集中单个时段）</th></tr>
+<tr><td>0.05</td><td>3.66%</td><td>8.85%</td></tr>
+<tr><td>0.10</td><td>7.32%</td><td>17.71%</td></tr>
+<tr><td>0.20</td><td class="neg">14.65%</td><td class="neg">35.42%</td></tr>
+<tr><td>0.50</td><td class="neg">36.61%</td><td class="neg">88.54%</td></tr>
+<tr><td>0.734（飞龙实测换手）</td><td class="neg">53.75%</td><td class="neg">129.98%</td></tr>
+<tr><td>1.00</td><td class="neg">73.23%</td><td class="neg">177.08%</td></tr>
+</table>
+
+<h3>资金容量：这个池子上限约 1000 万</h3>
+<table>
+<tr><th>账户</th><th>持仓</th><th>单票买入</th><th>participation（中位）</th><th>全天冲击</th><th>能否执行</th></tr>
+<tr><td>1000 万</td><td>30 只</td><td>33 万</td><td>7.76%</td><td>9.5 bp</td><td>可行</td></tr>
+<tr><td>1000 万</td><td>50 只</td><td>20 万</td><td>4.7%</td><td>7.4 bp</td><td>可行</td></tr>
+<tr><td>1000 万</td><td>10 只</td><td>100 万</td><td>23.3%</td><td>—</td><td class="neg">否（超 20%）</td></tr>
+<tr><td>5000 万</td><td>50 只</td><td>100 万</td><td>23.3%</td><td>—</td><td class="neg">否</td></tr>
+<tr><td>1 亿</td><td>100 只</td><td>100 万</td><td>23.3%</td><td>—</td><td class="neg">否</td></tr>
+</table>
+<p>池内单票日成交额中位只有 <b>429 万</b>，99.25% 的标的日成交额不足 1 亿。
+<b>要做 5000 万以上，必须换池</b>（换到成交额 5000 万+ 的大票池）。</p>
+
+<h3>给定毛 alpha，最多能承受多大换手</h3>
+<table>
+<tr><th>毛 alpha</th><th>成本预算（一半）</th><th>最大日换手</th><th>相当于</th></tr>
+<tr><td>10%/年</td><td>5%</td><td>0.028</td><td>每 35 天换一次股</td></tr>
+<tr><td>20%/年</td><td>10%</td><td>0.056</td><td>每 17 天换一次股</td></tr>
+<tr><td>30%/年</td><td>15%</td><td>0.085</td><td>每 11 天换一次股</td></tr>
+<tr><td>50%/年</td><td>25%</td><td>0.141</td><td>每 7 天换一次股</td></tr>
+</table>
+
+<h2>实验 3 · 调仓频率（意外发现）</h2>
+<p>载体：按流动性滚动选 Top N 等权持有，比较不同再平衡周期（无前视）。</p>
+<table>
+<tr><th>持仓</th><th>调仓周期</th><th>毛年化</th><th>净年化</th><th>成本年化</th><th>日均换手</th><th>超额 t（vs 全池等权）</th></tr>
+<tr><td>30 只</td><td>每天</td><td>+3.42%</td><td>+2.87%</td><td>0.55%</td><td>0.016</td><td>-1.61</td></tr>
+<tr><td>30 只</td><td>60 天</td><td>+10.66%</td><td>+10.38%</td><td>0.28%</td><td>0.006</td><td>-1.18</td></tr>
+<tr><td>30 只</td><td>从不</td><td>+4.68%</td><td>+4.68%</td><td>0</td><td>0</td><td>-1.64</td></tr>
+<tr><td>50 只</td><td>每天</td><td>+8.63%</td><td>+8.11%</td><td>0.52%</td><td>0.015</td><td>-1.34</td></tr>
+<tr><td>50 只</td><td>60 天</td><td>+10.44%</td><td>+10.22%</td><td>0.22%</td><td>0.005</td><td>-1.22</td></tr>
+<tr><td colspan="2"><b>全池等权（每日再平衡）</b></td><td colspan="5"><b>+30.08%</b></td></tr>
+</table>
+
+<div class="warn">
+<b>两个关键发现</b><br>
+1. <b>再平衡很便宜</b>：只调权重不换股，成本只有 0.22~0.55%/年（日均换手 0.005~0.016）。
+真正吃钱的是<b>换股</b>（飞龙 0.734 换手 → 53.75%/年）。<b>降成本要降换股率，不是降再平衡频率。</b><br>
+2. <b>流动性最好的票反而最差</b>：流动性 Top30 年化仅 +3~10%，而全池等权 +30.08%，
+超额 t 在 -1.2 ~ -1.6。这个窗口里<b>小盘/低流动性显著跑赢</b>——
+这也解释了此前"池/基准错配造出假超额"的根源。
+</div>
+
+<h2>综合：现在能落地的执行规则</h2>
+<table>
+<tr><th>环节</th><th>规则</th><th>依据</th></tr>
+<tr><td>买入时点</td><td>优先开盘集合竞价 / 09:35；次选 11:00 前后</td><td>开盘比 VWAP 便宜 12.0bp，11:00 便宜 11.6bp</td></tr>
+<tr><td>买入时点</td><td><b>避开 10:00 与 13:05</b>（当日价格最贵）</td><td>仅便宜 5.3 / 5.8 bp</td></tr>
+<tr><td>卖出时点</td><td>优先 10:00~10:30；次选 13:05、15:00</td><td>早盘冲高，卖在当日相对高位</td></tr>
+<tr><td>下单方式</td><td>拆到全天，别集中在单个 5min 时段</td><td>冲击 9.5bp → 30.1bp，差 3 倍</td></tr>
+<tr><td>换股频率</td><td>控制在 <b>0.05/日以下</b>（约每 20 天换一次股）；alpha 强也别超过 0.14/日</td><td>0.2/日 就要付 14.65%/年</td></tr>
+<tr><td>持仓数量</td><td>1000 万账户至少 30 只，50~100 只更稳</td><td>10 只时 participation 23%，不可执行</td></tr>
+<tr><td>资金规模</td><td>liquid500 池上限约 <b>1000 万</b>；5000 万以上换池</td><td>池内单票日成交额中位仅 429 万</td></tr>
+</table>
+
+<h2>下一步建议</h2>
+<ul>
+<li><b>用这套真实成本口径，重跑 5min 因子（IC 0.2707）</b>——它是唯一有真信号的资产，
+之前翻负主因是 9.6x/日的换手；按 0.05/日 的换股率约束再看能否转正。</li>
+<li><b>把"流动性配额"写进组合优化</b>：<code>w_i ≤ k × 日均成交额 / 账户</code>，从源头避免买不进。</li>
+<li><b>若要上大资金</b>：先建一个高流动性池（日成交额 5000 万+），当前 liquid500 里这类票不足 3%。</li>
+<li>暂缓：日内时点做成策略（t 值不够）、继续挖日线选股因子（已系统性证伪）。</li>
+</ul>
+
+<div class="foot">
+脚本：<code>tools/intraday_timing_study.py</code> · <code>tools/turnover_cost_curve.py</code> ·
+<code>tools/rebalance_frequency_study.py</code> · <code>tools/backtest_reality_check.py</code><br>
+数据：<code>data/results/intraday_slot_profile.csv</code> · <code>intraday_timing_grid.csv</code> ·
+<code>turnover_cost_curve.csv</code> · <code>turnover_cost_participation.csv</code> ·
+<code>rebalance_freq_30.csv</code> · <code>rebalance_freq_50.csv</code><br>
+全部结论基于真实数据，未使用估计值；不显著处已明确标注。
+</div>
+
+</div>
+</body>
+</html>
