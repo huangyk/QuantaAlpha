@@ -116,6 +116,9 @@ backtest:
       open_cost: 0.0005
       close_cost: 0.0015
       min_cost: 5
+      # 市场冲击：cost_ratio = open/close_cost + impact_cost*(订单额/当根bar成交额)^2
+      # qlib 推荐系数 0.1。不设则 impact_cost=0（无冲击），5min 高换手会显著偏乐观。
+      impact_cost: 0.1
 
 llm:
   enabled: false
