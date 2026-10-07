@@ -268,7 +268,10 @@ def main():
             if len(g) < 60:
                 continue
             facs = build_active(g, N=args.N)
-            fwd = g["close"].shift(-args.horizon) / g["close"] - 1.0
+            # ⚠️ 对齐铁律（2026-10-07 修正）：因子在 T 日收盘算出，最早只能在 **T+1** 买入。
+            #    原式 close.shift(-h)/close = 用 T 日收盘价当买入价 → 未来函数，所有 IC 偏高。
+            #    正确：T+1 收盘买入 → T+1+h 收盘卖出，持有 h 天。
+            fwd = g["close"].shift(-(args.horizon + 1)) / g["close"].shift(-1) - 1.0
             idx = facs.index.intersection(fwd.dropna().index)
             if len(idx) < 30:
                 continue
