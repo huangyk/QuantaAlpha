@@ -35,21 +35,63 @@ code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:13px}
 <h1>战法 · 低换手池等权持有</h1>
 <div class="sub">QuantaAlpha ｜ 2026-10-08 ｜ 代码 <code>quantaalpha/strategy/pool_hold.py</code> ｜ 数据 cn_real_full 真实行情</div>
 
+
+<div class="warn" style="border-left-color:#e24b4a">
+<b style="color:#e24b4a">【重要更正 2026-10-08】本页的 +19.85% 存在严重<b>幸存者偏差</b>，真实预期低得多。</b><br>
+<code>liquid500</code> 清单是按 <b>2026-09-30 当天的流动性</b>选出前 500 只。
+用它回测 2020 年的买入，等于<b>提前知道哪些股票会在未来 6 年活下来并保持高流动性</b>。<br>
+用<b>无前视</b>的动态池（每月按当时成交额重新选 Top500）重跑 2013-2026：
+<b>全期年化只有 +2.50%</b>；而 <b>2021 年之后建仓为负收益</b>（详见下方「无偏验证」）。
+</div>
 <div class="rule">
 <b>规则（一句话）</b><br>
 每月首个交易日，在 <b>liquid500 池</b>中剔除次新股与涨停开盘股，等权买入，
 <b>永久持有，不再做任何择时、选股、调仓</b>。
 </div>
 
-<h2>实测性能（2020-06-01 建仓 → 2026-09-30，6.3 年）</h2>
+<h2>两套数字：原始（含幸存者偏差）vs 无偏</h2>
+
+<table>
+<tr><th>口径</th><th>区间</th><th>净年化</th><th>IR</th><th>回撤</th><th>说明</th></tr>
+<tr><td>原始（liquid500 静态清单）</td><td>2020-06 ~ 2026-09（6.3年）</td>
+<td class="pos"><b>+19.85%</b></td><td>+0.89</td><td>−35.88%</td><td><b class="neg">幸存者偏差</b></td></tr>
+<tr><td><b>无偏（动态池 Top500）</b></td><td>2013 ~ 2026（13年）</td>
+<td><b class="neg">+2.50%</b></td><td>+0.43</td><td>−11.39%</td><td>每月按当时成交额重选</td></tr>
+<tr><td>无偏 · 从 2019 起建仓</td><td>2019 ~ 2026</td><td class="neg">+0.80%</td><td>—</td><td>—</td><td>越晚建仓越差</td></tr>
+<tr><td>无偏 · 从 2021 起建仓</td><td>2021 ~ 2026</td><td class="neg"><b>−1.35%</b></td><td>—</td><td>—</td><td><b class="neg">负收益</b></td></tr>
+<tr><td>无偏 · 全部成熟股</td><td>2013 ~ 2026</td><td>+2.58%</td><td>+0.42</td><td>−14.75%</td><td>—</td></tr>
+</table>
+
 <div class="kv">
-<div><span>净年化</span><b class="pos">+19.85%</b></div>
-<div><span>IR</span><b>+0.89</b></div>
-<div><span>最大回撤</span><b class="neg">−35.88%</b></div>
-<div><span>建仓成本</span><b>18.5 bp</b></div>
-<div><span>换手</span><b>0</b></div>
+<div><span>原始（含偏差）</span><b class="pos">+19.85%</b></div>
+<div><span>无偏真实预期</span><b class="neg">+2.50%</b></div>
+<div><span>2021 后建仓</span><b class="neg">−1.35%</b></div>
+<div><span>一次换手成本</span><b>约 12 bp</b></div>
 </div>
-<p style="font-size:13px;color:var(--mut);margin:0">净年化已扣一次性建仓成本（含真实市场冲击）。逐池数据见 <code>data/results/strategy_final.csv</code>。</p>
+
+<h3>逐年（无偏动态池 Top500）</h3>
+<table>
+<tr><th>2013</th><th>2014</th><th>2015</th><th>2016</th><th>2017</th><th>2018</th><th>2019</th><th>2020</th><th>2021</th><th>2022</th><th>2023</th><th>2024</th><th>2025</th><th>2026</th></tr>
+<tr><td>+2.7</td><td>+7.3</td><td>+1.8</td><td>+13.8</td><td>+0.5</td><td>+3.1</td><td>+5.8</td><td>+8.7</td>
+<td class="neg">−2.1</td><td>+1.2</td><td>+2.1</td><td class="neg">−7.9</td><td>+1.9</td><td class="neg">−3.4</td></tr>
+</table>
+<p style="font-size:13px;color:var(--mut);margin:0">
+2013-2020 慢牛里每年为正；2021 年后多数年份为负或接近零；2024 最差（−7.9%）。</p>
+
+<h3>市值维度（独立检验，2022-03 ~ 2024-12，33 个月）</h3>
+<p>用数据库的 <code>float_shares</code>（qlib 数据集里没有这个字段）按流通市值分五档，
+结果<b>单调</b>——这坐实了「小市值占优」：</p>
+<table>
+<tr><th>档位</th><th>市值中位</th><th>年化</th><th>回撤</th></tr>
+<tr><td><b>最小 20%</b></td><td>20.4 亿</td><td class="pos"><b>−1.90%</b></td><td>−14.56%</td></tr>
+<tr><td>20-40%</td><td>35.4 亿</td><td>−2.81%</td><td>−14.20%</td></tr>
+<tr><td>40-60%</td><td>56.4 亿</td><td>−3.16%</td><td>−13.97%</td></tr>
+<tr><td>60-80%</td><td>103.2 亿</td><td>−3.42%</td><td>−12.50%</td></tr>
+<tr><td>最大 20%</td><td>291.2 亿</td><td class="neg">−3.69%</td><td>−11.85%</td></tr>
+</table>
+<p style="font-size:13px;color:var(--mut);margin:0">
+⚠️ 样本仅 33 个月且整段是熊市（五档全负），只能说明<b>相对关系</b>，不能当作绝对收益预期。
+股本字段只在 2020-2024 有数据，2011-2019 与 2025-2026 为空。</p>
 
 <h2>为什么是「什么都不做」</h2>
 <p>因为所有主动增强都被证伪了。这是本项目至今最诚实的结论：</p>
