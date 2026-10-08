@@ -67,7 +67,7 @@ def main():
     member_dates = []    # 与 member_log 一一对应
     for k, d0 in enumerate(mstart):
         d_prev = mstart[k - 1] if k > 0 else d0
-        liq = AMT.loc[:d_prev].tail(60).median().dropna()
+        liq = AMT.loc[:d_prev].tail(60).median().dropna().sort_values(ascending=False)  # ⚠️ 必须排序，否则取到的是字母序前 N 只
         mature = listing.loc[:d_prev].iloc[-1] >= MIN_LIST_DAYS
         limit_up = (O.loc[d0] / C.loc[d0].shift(1) - 1.0) >= 0.098
         for name, (lo, hi) in pools.items():

@@ -76,7 +76,7 @@ def main():
         hist = AMT.loc[:d_prev].tail(60).median()          # 过去 60 日成交额中位
         mature = listing.loc[:d_prev].iloc[-1] >= MIN_LIST_DAYS
         limit_up = (O.loc[d0] / C.loc[d0].shift(1) - 1.0) >= 0.098
-        liq = hist.dropna()
+        liq = hist.dropna().sort_values(ascending=False)   # ⚠️ 必须排序，否则取到字母序前 N 只
         for name, lo, hi in LAYERS:
             sel = [c for c in liq.index[lo:hi]
                    if mature.get(c, False) and pd.notna(C.at[d0, c])

@@ -53,45 +53,49 @@ code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:13px}
 
 <table>
 <tr><th>口径</th><th>区间</th><th>净年化</th><th>IR</th><th>回撤</th><th>说明</th></tr>
-<tr><td>原始（liquid500 静态清单）</td><td>2020-06 ~ 2026-09（6.3年）</td>
+<tr><td>原始（liquid500 静态清单）</td><td>2020-06 ~ 2026-09</td>
 <td class="pos"><b>+19.85%</b></td><td>+0.89</td><td>−35.88%</td><td><b class="neg">幸存者偏差</b></td></tr>
-<tr><td><b>无偏（动态池 Top500）</b></td><td>2013 ~ 2026（13年）</td>
-<td><b class="neg">+2.50%</b></td><td>+0.43</td><td>−11.39%</td><td>每月按当时成交额重选</td></tr>
-<tr><td>无偏 · 从 2019 起建仓</td><td>2019 ~ 2026</td><td class="neg">+0.80%</td><td>—</td><td>—</td><td>越晚建仓越差</td></tr>
-<tr><td>无偏 · 从 2021 起建仓</td><td>2021 ~ 2026</td><td class="neg"><b>−1.35%</b></td><td>—</td><td>—</td><td><b class="neg">负收益</b></td></tr>
-<tr><td>无偏 · 全部成熟股</td><td>2013 ~ 2026</td><td>+2.58%</td><td>+0.42</td><td>−14.75%</td><td>—</td></tr>
+<tr><td>无偏 · 流动性 Top500</td><td>2013 ~ 2026（13年）</td>
+<td>+2.02%</td><td>+0.33</td><td>−23.03%</td><td>2021 后 −4.04%</td></tr>
+<tr><td>无偏 · 流动性 501~1000</td><td>2013 ~ 2026</td><td>+2.66%</td><td>+0.42</td><td>−15.66%</td><td>2021 后 −2.55%</td></tr>
+<tr><td>无偏 · 流动性 1001~2000</td><td>2013 ~ 2026</td><td>+2.36%</td><td>+0.38</td><td>−14.95%</td><td>2021 后 −2.53%</td></tr>
+<tr><td><b>无偏 · 流动性 2000 名以后</b></td><td>2013 ~ 2026</td>
+<td class="pos"><b>+2.89%</b></td><td>+0.46</td><td>−14.88%</td><td><b>2021 后 −1.41%，2025 起仅 −0.10%</b></td></tr>
+<tr><td>无偏 · 全部成熟股</td><td>2013 ~ 2026</td><td>+2.58%</td><td>+0.42</td><td>−14.75%</td><td>2021 后 −1.97%</td></tr>
 </table>
 
 <div class="kv">
 <div><span>原始（含偏差）</span><b class="pos">+19.85%</b></div>
-<div><span>无偏真实预期</span><b class="neg">+2.50%</b></div>
-<div><span>2021 后建仓</span><b class="neg">−1.35%</b></div>
+<div><span>无偏真实预期</span><b class="neg">+2.0~2.9%/年</b></div>
+<div><span>2021 后（Top500）</span><b class="neg">−4.04%</b></div>
 <div><span>一次换手成本</span><b>约 12 bp</b></div>
 </div>
 
-<h3>逐年（无偏动态池 Top500）</h3>
-<table>
-<tr><th>2013</th><th>2014</th><th>2015</th><th>2016</th><th>2017</th><th>2018</th><th>2019</th><th>2020</th><th>2021</th><th>2022</th><th>2023</th><th>2024</th><th>2025</th><th>2026</th></tr>
-<tr><td>+2.7</td><td>+7.3</td><td>+1.8</td><td>+13.8</td><td>+0.5</td><td>+3.1</td><td>+5.8</td><td>+8.7</td>
-<td class="neg">−2.1</td><td>+1.2</td><td>+2.1</td><td class="neg">−7.9</td><td>+1.9</td><td class="neg">−3.4</td></tr>
+<div class="warn">
+<b>池子建议已修正</b>：本次修正了一个池构建 bug（漏了 <code>sort_values</code>，
+导致取到的是「字母序前 N 只」而非「流动性前 N 只」）。修正后结论<b>翻转</b>：
+<b>低流动性段（2000 名以后）长期最优，Top500 最差</b>。
+滚动起点（年化 %）：
+<table style="margin-top:6px">
+<tr><th>起点</th><th>2013</th><th>2017</th><th>2019</th><th>2021</th><th>2025</th></tr>
+<tr><td>Top500</td><td>+2.02</td><td>+0.28</td><td>−0.54</td><td>−4.04</td><td>−2.97</td></tr>
+<tr><td><b>2000 名以后</b></td><td><b>+2.89</b></td><td><b>+0.91</b></td><td><b>+0.74</b></td><td><b>−1.41</b></td><td><b>−0.10</b></td></tr>
+<tr><td>全部成熟股</td><td>+2.58</td><td>+0.82</td><td>+0.46</td><td>−1.97</td><td>−0.58</td></tr>
 </table>
-<p style="font-size:13px;color:var(--mut);margin:0">
-2013-2020 慢牛里每年为正；2021 年后多数年份为负或接近零；2024 最差（−7.9%）。</p>
+→ 「低流动性长期跑赢」是<b>真实规律</b>；2021 后全市场都差，但低流动性段跌得最少。
+</div>
 
-<h3>市值维度（独立检验，2022-03 ~ 2024-12，33 个月）</h3>
-<p>用数据库的 <code>float_shares</code>（qlib 数据集里没有这个字段）按流通市值分五档，
-结果<b>单调</b>——这坐实了「小市值占优」：</p>
+<h3>换手率因子：IC 通过了真正的样本外检验，但策略仍无增益</h3>
+<p>2025-2026 的换手率用 akshare（东方财富）新拉，<b>脚本运行前从未见过</b>：</p>
 <table>
-<tr><th>档位</th><th>市值中位</th><th>年化</th><th>回撤</th></tr>
-<tr><td><b>最小 20%</b></td><td>20.4 亿</td><td class="pos"><b>−1.90%</b></td><td>−14.56%</td></tr>
-<tr><td>20-40%</td><td>35.4 亿</td><td>−2.81%</td><td>−14.20%</td></tr>
-<tr><td>40-60%</td><td>56.4 亿</td><td>−3.16%</td><td>−13.97%</td></tr>
-<tr><td>60-80%</td><td>103.2 亿</td><td>−3.42%</td><td>−12.50%</td></tr>
-<tr><td>最大 20%</td><td>291.2 亿</td><td class="neg">−3.69%</td><td>−11.85%</td></tr>
+<tr><th>因子</th><th>train 2020-21</th><th>valid 2022</th><th>test 2023-24</th><th>OOS 2025</th><th>OOS 2026</th></tr>
+<tr><td><b>换手水平</b></td><td>−0.0691(−11.4)</td><td>−0.0814(−9.4)</td><td>−0.0764(−8.7)</td>
+<td><b>−0.0382(−2.8)</b></td><td><b>−0.0395(−2.1)</b></td></tr>
 </table>
-<p style="font-size:13px;color:var(--mut);margin:0">
-⚠️ 样本仅 33 个月且整段是熊市（五档全负），只能说明<b>相对关系</b>，不能当作绝对收益预期。
-股本字段只在 2020-2024 有数据，2011-2019 与 2025-2026 为空。</p>
+<p>IC <b>首次通过完整样本外检验</b>。但策略层面（2025-2026 真实成本）：
+剔除换手最高 10%/20% 的年化超额仅 <b>−0.37%</b>（t=−0.84 / −0.45）；
+分位组是<b>倒 U 型</b>（D1 +20.8 → D9 +86.7 → D10 +49.0），alpha 只存在于极端档，
+无法通过「剔除/低配」变现 → <b>第五次验证「正 IC ≠ 可提取 alpha」</b>。</p>
 
 <h2>为什么是「什么都不做」</h2>
 <p>因为所有主动增强都被证伪了。这是本项目至今最诚实的结论：</p>
