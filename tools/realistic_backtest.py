@@ -359,7 +359,16 @@ def main():
     ap.add_argument("--capital", type=float, default=8e4)
     ap.add_argument("--n-positions", type=int, default=6)
     ap.add_argument("--min-amount", type=float, default=3e7)
+    ap.add_argument("--commission", type=float, default=0.00025,
+                   help="佣金率(小数), 默认万2.5=0.00025; 万1填 0.0001")
+    ap.add_argument("--min-commission", type=float, default=5.0,
+                   help="最低佣金(元), 默认5; 无最低限制填 0")
     args = ap.parse_args()
+
+    # 用命令行费率覆盖全局常量(单进程内生效)
+    global COMM_RATE, COMM_MIN
+    COMM_RATE = args.commission
+    COMM_MIN = args.min_commission
 
     c = conn(); cur = c.cursor()
     idx = load_market(cur)
