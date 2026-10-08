@@ -29,6 +29,35 @@
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
   }
+
+  /* ★ 深色主题（深灰底 + 蓝紫）：tailwind 早就配了 darkMode:'class'，
+     但从未应用 —— 在 index.html 的 <html> 上加 class="dark" 即启用。
+     想要回浅色，把那个 class 去掉即可，两套变量互不影响。 */
+  .dark {
+    --background: 222 24% 8%;
+    --foreground: 210 20% 92%;
+    --card: 222 24% 11%;
+    --card-foreground: 210 20% 92%;
+    --popover: 222 24% 12%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 250 80% 68%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 222 20% 18%;
+    --secondary-foreground: 210 20% 92%;
+    --muted: 222 20% 18%;
+    --muted-foreground: 217 14% 62%;
+    --accent: 222 20% 21%;
+    --accent-foreground: 210 20% 92%;
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 210 20% 98%;
+    --success: 142 70% 45%;
+    --success-foreground: 210 20% 98%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 222 47% 11%;
+    --border: 220 15% 21%;
+    --input: 220 15% 23%;
+    --ring: 250 80% 68%;
+  }
 }
 
 @layer base {
@@ -81,6 +110,40 @@
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(0, 0, 0, 0.1);
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+}
+
+/* 深色下的玻璃层：白玻璃在深灰底上会变成一块"白斑"，必须整套替换 */
+.dark .glass {
+  background: rgba(26, 29, 38, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.35), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+}
+
+.dark .glass-strong {
+  background: rgba(20, 23, 31, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.25);
+}
+
+/* 深色下的光晕要更亮一点才看得出来 */
+.dark .gradient-mesh {
+  background:
+    radial-gradient(at 40% 20%, rgba(139, 124, 246, 0.22) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, rgba(59, 130, 246, 0.22) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, rgba(16, 185, 129, 0.16) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, rgba(245, 158, 11, 0.16) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(236, 72, 153, 0.18) 0px, transparent 50%),
+    radial-gradient(at 80% 100%, rgba(59, 130, 246, 0.20) 0px, transparent 50%);
+}
+
+.dark .animate-shimmer {
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 50%,
+    transparent 100%
+  );
+  background-size: 1000px 100%;
 }
 
 /* Gradient backgrounds */

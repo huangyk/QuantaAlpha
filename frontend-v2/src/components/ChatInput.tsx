@@ -47,8 +47,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
     }
   }, [input]);
 
+  // ml-* 让开左侧导航栏，避免输入框盖在导航上
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 pb-6">
+    <div className="fixed bottom-0 left-0 right-0 z-50 pb-6 ml-[72px] lg:ml-64">
       <div className="container mx-auto px-6">
         
         {/* Example Prompts */}

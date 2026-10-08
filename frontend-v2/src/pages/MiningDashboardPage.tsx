@@ -6,6 +6,8 @@ import { FactorStatsRow } from '@/components/FactorStatsRow';
 import { FactorList } from '@/components/FactorList';
 import { useTaskContext } from '@/context/TaskContext';
 import { Layout } from '@/components/layout/Layout';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Activity } from 'lucide-react';
 import type { PageId } from '@/components/layout/Layout';
 
 interface MiningDashboardPageProps {
@@ -29,15 +31,13 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
         onNavigate={onNavigate || (() => {})}
         showNavigation={!!onNavigate}
       >
-        <div className="flex flex-col items-center justify-center min-h-[60vh] animate-fade-in-up">
-          <p className="text-muted-foreground">当前无进行中的挖掘任务</p>
-          <button 
-            className="mt-4 text-primary hover:underline"
-            onClick={() => onNavigate?.('home')}
-          >
-            返回主页
-          </button>
-        </div>
+        <EmptyState
+          icon={Activity}
+          title="当前无进行中的挖掘任务"
+          description="回到主页用大白话描述你的选股想法，即可启动一轮因子挖掘。"
+          action={{ label: '返回主页', onClick: () => onNavigate?.('home') }}
+          className="min-h-[60vh]"
+        />
       </Layout>
     );
   }

@@ -1,14 +1,10 @@
 import React from 'react';
-import {
-  AreaChart,
-  Area,
-  ResponsiveContainer,
-} from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/HoverCard";
 import { RealtimeMetrics } from '@/types';
 import { formatNumber, formatPercent } from '@/utils';
-import { TrendingUp } from 'lucide-react';
+import { Layers } from 'lucide-react';
 
 interface FactorListProps {
   metrics: RealtimeMetrics | null;
@@ -117,9 +113,15 @@ export const FactorList: React.FC<FactorListProps> = ({ metrics }) => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-muted-foreground">
-                    暂无因子数据
+                <tr>
+                  <td colSpan={9}>
+                    <EmptyState
+                      icon={Layers}
+                      title="暂无因子数据"
+                      description="挖掘任务运行后，当前因子库 RankIC 排名前 10 的因子会实时出现在这里。"
+                    />
                   </td>
+                </tr>
                 </tr>
               )}
 
