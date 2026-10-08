@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QuantaAlpha 交易计划 · 操作手册</title>
+<title>QuantaAlpha 交易计划 · 含盈亏比</title>
 <style>
-  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:920px;margin:24px auto;padding:0 18px;color:#1a1a1a;line-height:1.7;background:#fafafa}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:940px;margin:24px auto;padding:0 18px;color:#1a1a1a;line-height:1.7;background:#fafafa}
   h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
   h2{font-size:19px;margin-top:32px;color:#1d4ed8;border-left:4px solid #2563eb;padding-left:10px}
   h3{font-size:16px;color:#374151;margin-top:20px}
@@ -20,19 +20,51 @@
   .num{display:inline-block;width:24px;height:24px;background:#2563eb;color:#fff;border-radius:50%;text-align:center;line-height:24px;font-weight:700;margin-right:8px}
   .small{font-size:13px;color:#6b7280}
   blockquote{background:#fffbeb;border-left:4px solid #f59e0b;margin:12px 0;padding:10px 14px;color:#92400e}
+  .kpi{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+  .card{flex:1;min-width:150px;background:#fff;border:1px solid #dbeafe;border-radius:10px;padding:12px 14px;text-align:center}
+  .card .v{font-size:26px;font-weight:800;color:#1d4ed8}
+  .card .l{font-size:12px;color:#6b7280;margin-top:4px}
+  .red{color:#dc2626}.grn{color:#16a34a}
 </style>
 </head>
 <body>
 
-<h1>QuantaAlpha 交易计划 · 操作手册</h1>
-<p class="small">生成日期 2026-10-08 · 基于 2020–2026 全样本严格口径验证 · 项目根目录 <code>docs/trading_plan.html</code></p>
+<h1>QuantaAlpha 交易计划 · 含盈亏比</h1>
+<p class="small">生成日期 2026-10-08 · 口径：2011–2026 全样本、真实成本、无前视 · 数据 <code>data/cache/panel_2011.parquet</code></p>
 
 <div class="warn">
-  ⚠️ 先说最关键的实话：我们挖了飞龙 / 战法2 / 5min 低波动 / 短期反转 / 换手率因子等十几个信号，
-  在「真实交易成本 + 信号-收益正确对齐」口径下 <b>全部证伪</b>。没有任何一个横截面选股因子能稳定跑赢。
-  下面这份计划不是"一年赚 30–40%"的秘籍，而是 <b>唯一经得起验证的东西：低换手池等权持有</b>——
-  它本质是「买一篮子中小盘并持有」的 beta/风格策略，不是 alpha。
+  ⚠️ 先说最关键的实话（请你先读这段再决定用不用）：
+  所有横截面选股因子（飞龙 / 战法2 / 5min / 反转 / 换手率）在严格口径下 <b>全部证伪</b>。
+  下面这份是 <b>唯一能算出正期望的东西：流动性中后段池「月再平衡」</b>。
+  它不是"一年 30–40%"的秘籍，是 <b>盈亏比 1.13、胜率 57%、期望月收益 +1.24% 的薄alpha策略</b>，
+  且 <b>2017–2020 段实际亏 −2.8%</b>（胜率掉到 48%）。能交易、有正期望，但薄且吃市场阶段。
 </div>
+
+<h2>§0 核心指标：盈亏比（你要的就是这个）</h2>
+<p>策略：每月首个交易日按「过去 60 日成交额」重选流动性第 1001~3000 名等权买入，持有到次月首再平衡。
+<b>每一个再平衡周期 = 一次「交易回合」</b>，盈亏比按回合统计。</p>
+
+<div class="kpi">
+  <div class="card"><div class="v">1.13</div><div class="l">★ 盈亏比 = 平均盈利÷平均亏损</div></div>
+  <div class="card"><div class="v">57.4%</div><div class="l">胜率（162 个回合中 93 个盈利）</div></div>
+  <div class="card"><div class="v grn">+1.24%</div><div class="l">期望月收益</div></div>
+  <div class="card"><div class="v grn">+11.5%</div><div class="l">全期年化（净，扣成本）</div></div>
+  <div class="card"><div class="v red">−52.6%</div><div class="l">最大回撤</div></div>
+</div>
+
+<table>
+<tr><th>每段（P3 池）</th><th>盈亏比</th><th>胜率</th><th>年化</th><th>最大回撤</th><th>解读</th></tr>
+<tr><td>2011–2016</td><td>0.68</td><td>75.7%</td><td class="grn">+36.4%</td><td>−49.5%</td><td>小盘牛市，盈亏比低但胜率高</td></tr>
+<tr><td>2017–2020</td><td>1.09</td><td class="red">47.9%</td><td class="red">−2.8%</td><td>−43.6%</td><td>⚠️ 胜率跌破 50% → 实际亏钱</td></tr>
+<tr><td>2021–2026</td><td>1.07</td><td>60.3%</td><td class="grn">+12.4%</td><td>−23.7%</td><td>近期样本为正，回撤可控</td></tr>
+</table>
+
+<blockquote>
+  <b>怎么读盈亏比 1.13</b>：每笔盈利平均赚 6.33%/月，每笔亏损平均亏 5.61%/月。
+  盈亏比 <b>低于 2.0 的健康线</b>——本策略靠「胜率 57%」而非「赚多赔少」吃饭。
+  <b>一旦胜率掉到 50% 以下（如 2017–2020），整体就亏</b>。所以它是薄alpha，不是稳赚。
+  <b>最大回撤 −52.6%</b> 意味着你要能扛住账户腰斩，否则撑不到正期望兑现。
+</blockquote>
 
 <h2>§1 战法总结：到底有没有用</h2>
 <table>
@@ -40,77 +72,75 @@
 <tr><td>飞龙 V2（三因子+大盘闸门）</td><td>❌ 无截面 alpha，闸门方向反</td><td>同池基准下 −11.4%</td></tr>
 <tr><td>战法2（均线回踩低吸）</td><td>❌ 因子内部自相矛盾，样本外全负</td><td>测试期 −50%</td></tr>
 <tr><td>5min 低波动族</td><td>❌ 分组不单调（U 型）</td><td>净超额 +5.6%（t=0.42 不显著）</td></tr>
-<tr><td>短期反转+量能退潮</td><td>❌ 正 IC 但提取不出（Top 组跑输）</td><td>净超额 +8.9%（t=0.42）</td></tr>
-<tr><td>换手率因子</td><td>❌ 首次过 OOS IC 检验，但仍不可变现</td><td>策略超额 −0.37%（t=−0.84）</td></tr>
-<tr><td><b>低换手池等权持有</b></td><td><b>✅ 唯一存活</b></td><td><b>中后段流动性 +2.89%（全期）/ 2021 后 −1.41%</b></td></tr>
+<tr><td>短期反转+量能退潮</td><td>❌ 正 IC 但提取不出</td><td>净超额 +8.9%（t=0.42）</td></tr>
+<tr><td>换手率因子</td><td>❌ 过 OOS IC 检验但仍不可变现</td><td>策略超额 −0.37%（t=−0.84）</td></tr>
+<tr><td><b>流动性中后段 · 月再平衡</b></td><td><b>✅ 唯一正期望</b></td><td><b>+11.5%（全期）/ 段内 −2.8%~+36%</b></td></tr>
+<tr><td>（对照）流动性中后段 · 买入持有</td><td>保守版，不轮动</td><td>+2.5%（全期，2021 后转负）</td></tr>
 </table>
 <blockquote>
-  <b>关于「+19.85%」的澄清</b>：早期报告里的 liquid500 +19.85% 是 <b>幸存者偏差</b>——
-  那个池是按 2026 年的流动性挑的前 500 只，等于「提前知道谁活下来」。<b>不能用作预期</b>，
-  只能当理论上限参考。无偏口径（每月用当时数据重选）只有约 +2.5%/年，且 2021 年起转负。
+  <b>为什么月再平衡（+11.5%）比买入持有（+2.5%）高？</b>
+  买入持有只在第 1 个月吃到流动性溢价，之后篮子名称固化、不再代表「中后段」；
+  月再平衡每月把篮子轮回「当时流动性中后段」，持续重吃溢价。两者不是同一策略，
+  再平衡多出来的收益来自<strong>流动性轮动</strong>，不是某个选股 alpha。
 </blockquote>
 
-<h2>§2 交易计划（照着做）</h2>
+<h2>§2 交易计划（照着做 · 月再平衡版）</h2>
+<div class="step"><span class="num">1</span><b>选池</b>：全 A 按「过去 60 日成交额中位数」排序，取 <b>第 1001~3000 名（流动性中后段）</b>。
+  这是盈亏比 1.13、期望 +1.24%/月 的池。范围收到 <b>1001~1500</b>（约 500 只）更便于手动下单。</div>
+<div class="step"><span class="num">2</span><b>剔除</b>（建仓日）：① 上市 &lt; 500 交易日（近似剔除次新）；② 涨停开盘（买不进）；
+  ③ 停牌/无成交；④ 全市场更新股数 &lt; 候选一半则<strong>跳过该日</strong>（数据残缺）。</div>
+<div class="step"><span class="num">3</span><b>建仓时点</b>：每月首个交易日 <b>09:30 集合竞价</b>买入（实测比当日 VWAP 便宜 12bp）。
+  避开 10:00 与 13:05；拆单到全天（集中单时段冲击贵 3 倍）。</div>
+<div class="step"><span class="num">4</span><b>权重</b>：等权；单票 ≤ 5%；流动性配额 <code>w ≤ 2% × 日成交额 / 账户</code>。
+  1000 万账户建议 <code>--lo 1001 --hi 1500</code>（约 500 只，每票 ~2 万，100 股可成交）。</div>
+<div class="step"><span class="num">5</span><b>再平衡</b>：<strong>每月首个交易日</strong>卖出现在清单没有的、买入新清单有的。
+  月均换手约 16% → 500 只约 80 卖 + 80 买 = 160 笔/月，手动可承受。</div>
+<div class="step"><span class="num">6</span><b>退出</b>：退市 / ST / 单票流动性枯竭（日成交额长期为 0）。正常波动<strong>不止损</strong>
+  （A 股跌停日无法止损，是接受的尾部代价；靠 −5% 单票上限 + 分散控回撤）。</div>
+<div class="step"><span class="num">7</span><b>容量</b>：1000 万可落地；成交量单位修正后数亿也能执行（单票日成交额中位约 4.3 亿）。</div>
 
-<div class="step"><span class="num">1</span><b>选池</b>：全 A 按 60 日成交额中位数排序，取 <b>流动性中后段（第 1001~3000 名）</b>。
-  修正池构建 bug 后证实：低流动性段长期跑赢（中后段 +2.89% &gt; Top500 +2.02%）。</div>
-<div class="step"><span class="num">2</span><b>剔除</b>（建仓日）：① 数据历史 &lt; 500 交易日（近似剔除次新股）；
-  ② 涨停开盘（买不进）；③ 停牌/无成交；④ 若当天全市场更新股票 &lt; 候选一半，<b>跳过该日</b>（数据残缺）。</div>
-<div class="step"><span class="num">3</span><b>建仓时点</b>：每月首个交易日，<b>09:30 集合竞价</b>买入（实测比当日 VWAP 便宜 12bp）。
-  避开 10:00 与 13:05（当日最贵）；拆单到全天（集中单时段冲击贵 3 倍）。</div>
-<div class="step"><span class="num">4</span><b>权重</b>：等权；单票 ≤ 5%；流动性配额 <code>w ≤ 2% × 日成交额 / 账户</code>（防冲击）。
-  不划算的高价股因 100 股取整会自然落到 0 股——属正常残差。</div>
-<div class="step"><span class="num">5</span><b>持有</b>：<b>永久持有，不择时、不选股、不调仓、不用大盘闸门</b>。
-  所有「择时/再平衡/风格开关」增强实测都是负超额——不动就是最好的动作。</div>
-<div class="step"><span class="num">6</span><b>卖出</b>：仅三种退出——退市、ST 风险、或单票流动性枯竭（日成交额长期为 0）。
-  正常波动 <b>不止损</b>（A 股跌停日无法止损，这是接受的尾部代价）。</div>
-<div class="step"><span class="num">7</span><b>容量</b>：1000 万账户可落地；经成交量单位修正后，数亿资金也能执行（单票日成交额中位数约 4.3 亿）。</div>
-
-<h2>§3 怎么用（部署到 QMT / Ptrade）</h2>
-<p>研究代码与下单解耦，本计划是「人工抄单」模式（最稳，不依赖自动交易授权）：</p>
+<h2>§3 怎么用（部署到 QMT / Ptrade 抄单）</h2>
 <ol>
-<li>在 QMT 正常机器上（或沙箱连 TimescaleDB）运行下单清单生成器：
+<li>在 QMT 正常机器上运行下单清单生成器（按最新交易日选池）：
   <pre><code>cd D:\qqmt\QuantaAlpha
-python tools/make_order_list.py                 # 默认 1000万 / 流动性 1001~3000
+python tools/make_order_list.py                      # 默认 1000万 / 1001~3000
 python tools/make_order_list.py --account 5e6 --lo 1001 --hi 1500</code></pre>
-  产出 <code>data/results/order_list_YYYYMMDD.csv</code>（列：代码 / 权重 / 参考价 / 股数 / 金额）。</li>
-<li>打开 CSV，按「股数」列在 QMT 交易终端<b>手动下达买入单</b>（等权、09:30 集合竞价）。</li>
-<li>每月首个交易日<b>重复一次</b>：卖出现在清单里没有的、买入新清单里有的（换手极低，多数月份几乎不动）。</li>
-<li><b>实战参数调节</b>：1000 万账户建议把范围收到 <code>--lo 1001 --hi 1500</code>（约 500 只，每票 ~2 万，100 股可成交）；
-  1770 只版本每票仅 ~5600 元，高价股会 rounding 成 0 股、现金闲置偏多。</li>
+  产出 <code>data/results/order_list_YYYYMMDD.csv</code>（代码 / 权重 / 参考价 / 股数 / 金额）。</li>
+<li>打开 CSV，按「股数」列在 QMT 终端<strong>手动下达买入单</strong>（09:30 集合竞价）。</li>
+<li><strong>每月首个交易日重复一次</strong>：对比上月清单，卖出消失的、买入新增的。</li>
 </ol>
-<div class="ok">✅ 已用 2026-09-30 实测跑通：筛出 1770 只可买，等权，占用 827 万（1000 万账户）。清单真实可读。</div>
+<div class="ok">✅ 2026-09-30 实测跑通：筛出 1770 只可买，等权，占用 827 万（1000 万账户）。清单真实可读。</div>
 
 <h2>§4 怎么验证（回测 + 实盘监控）</h2>
+<h3>A. 回测复跑</h3>
+<pre><code>python tools/strategy_pnl_ratio.py     # 重算盈亏比/胜率/回撤 → data/results/pnl_ratio.csv
+python tools/strategy_final.py         # 统一口径各池 buy&amp;hold → strategy_final.csv</code></pre>
+<p><b>及格线</b>：P3 池（1001~3000）月再平衡净年化 &gt; +5%、盈亏比 &gt; 1.0、胜率 &gt; 50%。
+  <b>不及格</b>：若某 3 年窗口胜率 &lt; 50% 且年化转负，说明风格切换，暂停加仓（仿 2017–2020）。</p>
 
-<h3>A. 回测复跑（验证策略本身没坏）</h3>
-<pre><code>python tools/strategy_final.py        # 统一口径重算各池 buy&amp;hold
-# 看 data/results/strategy_final.csv：按「净年化」排序</code></pre>
-<p><b>及格线</b>：中后段流动性净年化 &gt; 同池等权基准（约 +2.5%）；
-<b>不及格</b>：若某一层明显转负或跑输基准 &gt; 2pp，说明风格又切换，暂停加仓。</p>
-
-<h3>B. 实盘监控（验证你执行得对）</h3>
+<h3>B. 实盘监控</h3>
 <table>
 <tr><th>指标</th><th>怎么看</th><th>判读</th></tr>
-<tr><td>每日净值</td><td>账户市值 / 期初</td><td>对比同池等权基准（可用 strategy_final.csv 的层收益近似）</td></tr>
-<tr><td>最大权重漂移</td><td>单票权重 − 5% 上限</td><td>超过则说明某票暴涨，考虑减回上限（非强制）</td></tr>
-<tr><td>最大回撤</td><td>净值 / 历史峰值 − 1</td><td>全期约 −11%~−18%；单段更深属正常</td></tr>
-<tr><td>月度换股率</td><td>当月买卖金额 / 总市值</td><td>应 &lt; 5%（高换手会吃掉收益，是头号杀手）</td></tr>
+<tr><td>每月回合收益</td><td>月末市值 / 月初市值 − 1</td><td>对照盈亏比表：盈利月应 ≈ +6.3%，亏损月 ≈ −5.6%</td></tr>
+<tr><td>滚动胜率</td><td>近 12 个月盈利月数 / 12</td><td>&lt; 50% 连续 3 月 → 预警，考虑减仓</td></tr>
+<tr><td>最大回撤</td><td>净值 / 峰值 − 1</td><td>全期 −52.6%；若逼近 −40% 且不止损则检查篮子是否失真</td></tr>
+<tr><td>月度换股率</td><td>当月买卖金额 / 总市值</td><td>应 ≈ 16%（过高说明池漂移太快，成本上升）</td></tr>
 </table>
-<blockquote>验证铁律：<b>判 alpha 看分位组单调性，不只看 top-K 超额</b>；<b>基准必须同池口径</b>；
-<b>IC 高得离谱先查信号-收益对齐</b>（未来函数是本项目头号造假源）。这三条有任何一条被违反，结论作废。</blockquote>
 
-<h2>§5 风险提示与下一步</h2>
+<h2>§5 风险与诚实边界（请务必读）</h2>
 <ul>
-<li><b>这不是 alpha</b>：预期年化约 +2.5%，2021 年后样本为负。把它当「底仓/市场敞口」，别当印钞机。</li>
-<li><b>风格切换是最大风险</b>：低流动性占优在 2021 后减弱，若市场转大市值风格，本计划会跑输。</li>
-<li><b>真正的破局方向</b>（尚未验证）：补行业+市值+涨跌停/ST 做真中性化、换成熟成分股池、
-  在执行层降换股率。当前无任何经验证的 alpha，任何新因子须先显著跑赢同池等权。</li>
+<li><b>盈亏比 1.13 偏低</b>：健康线 ≥ 2.0。本策略靠胜率（57%）吃饭，胜率一掉到 50% 以下就亏（2017–2020 实证 −2.8%）。</li>
+<li><b>最大回撤 −52.6%</b>：你能扛住账户腰斩吗？扛不住就别全仓，按能承受的回撤反推仓位（如只敢 −20% → 半仓）。
+
+</li>
+<li><b>幸存者偏差风险（未验证）</b>：面板若剔除退市股，小盘篮子的最坏亏损（归零）会被漏掉 →
+  真实盈亏比/年化可能比我算的低。<b>上线前请用含退市股的完整数据复核一次</b>。</li>
+<li><b>风格切换是头号风险</b>：低流动性占优在 2017–2020 失效。没有任何择时开关被验证有效，只能靠「胜率跌破 50% 减仓」被动应对。</li>
+<li><b>保守对照</b>：若你不接受 −52% 回撤，退回「买入持有」版（<code>strategy_final.py</code> 口径），预期仅 +2.5%/年、回撤更小。</li>
 </ul>
 
-<p class="small">配套文件：<code>quantaalpha/strategy/pool_hold.py</code>（策略逻辑）·
-<code>tools/make_order_list.py</code>（下单清单）· <code>tools/strategy_final.py</code>（回测验证）·
-<code>docs/strategy_card.html</code>（战法卡）</p>
+<p class="small">配套：<code>tools/strategy_pnl_ratio.py</code>（盈亏比）· <code>tools/make_order_list.py</code>（下单清单）·
+<code>tools/strategy_final.py</code>（回测）· <code>data/results/pnl_ratio.csv</code>（原始数据）</p>
 
 </body>
 </html>
