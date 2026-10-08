@@ -63,7 +63,7 @@ def load(db, as_of=None):
     return latest, mat, px
 
 
-def build(latest, mat, px, account, lo_rank, hi_rank):
+def build(latest, mat, px, account, lo_rank, hi_rank, max_positions=None):
     # 流动性：每票近 60 日成交额中位数
     amt60 = (px.groupby("asset_code")["amount"]
                .apply(lambda s: s.tail(WINDOW).median()))
@@ -75,6 +75,14 @@ def build(latest, mat, px, account, lo_rank, hi_rank):
     uni = amt60.dropna().sort_values(ascending=False).index
     # 取流动性排名 [lo_rank, hi_rank]（1-indexed，1=最流动）
     sel = uni[lo_rank - 1: hi_rank]
+    # 小资金友好：先剔除「买不起 100 股」的票（ref_price*100 > 单票预算*1.3），
+    # 再在剩余池里取流动性最高的前 N 只，保证充分投资且能成交
+    if max_positions:
+        budget = account / max_positions
+        last_all = px[px.trade_date == latest].set_index("asset_code")["close"]
+        affordable = (last_all.reindex(sel) * LOT) <= budget * 1.3
+        sel = sel[affordable.reindex(sel).fillna(False).values]
+        sel = sel[:max_positions]
     df = pd.DataFrame(index=sel)
     df["amt60"] = amt60.reindex(sel)
     df["mature"] = mat.reindex(sel).fillna(0) >= MIN_LIST_DAYS
@@ -106,7 +114,12 @@ def build(latest, mat, px, account, lo_rank, hi_rank):
     out["daily_amount"] = df["amt60"].reindex(w.index)
     shares = (account * w / ref / LOT).apply(lambda x: int(x) * LOT)
     out["shares"] = shares
-    out["notional"] = shares * ref
+    # 小资金：买不起 100 股（shares=0）的票直接剔除（理论上上面已过滤，双保险）
+    out = out[out["shares"] > 0]
+    if len(out) == 0:
+        return None
+    out["notional"] = out["shares"] * ref.reindex(out.index)
+    out["weight"] = out["notional"] / out["notional"].sum()
     out = out.sort_values("weight", ascending=False)
     return out
 
@@ -116,15 +129,18 @@ def main():
     ap.add_argument("--account", type=float, default=1e7)
     ap.add_argument("--lo", type=int, default=1001, dest="lo_rank")
     ap.add_argument("--hi", type=int, default=3000, dest="hi_rank")
+    ap.add_argument("--max-positions", type=int, default=None,
+                    help="持股数量上限（小资金用，如 8万账户用 25）")
     ap.add_argument("--as-of", type=str, default=None)
     args = ap.parse_args()
 
     db = psycopg2.connect(**DB)
     latest, mat, px = load(db, args.as_of)
     db.close()
-    print(f"建仓日(库内最新): {latest.date()}  账户: {args.account/1e4:.0f}万  流动性排名: {args.lo_rank}~{args.hi_rank}")
+    pos_note = f"  持股上限: {args.max_positions}只" if args.max_positions else ""
+    print(f"建仓日(库内最新): {latest.date()}  账户: {args.account/1e4:.0f}万  流动性排名: {args.lo_rank}~{args.hi_rank}{pos_note}")
 
-    out = build(latest, mat, px, args.account, args.lo_rank, args.hi_rank)
+    out = build(latest, mat, px, args.account, args.lo_rank, args.hi_rank, args.max_positions)
     if out is None:
         print("❌ 该口径下可买池为空（检查 DB 数据完整性）")
         return
