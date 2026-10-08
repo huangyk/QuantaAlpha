@@ -15,6 +15,7 @@ build_turnover_panel.py
 import psycopg2
 import pandas as pd
 import numpy as np
+import argparse
 
 DB = dict(host="127.0.0.1", port=5432, dbname="quant_data", user="quant", password="quant123456")
 AK_PATH = "data/cache/akshare_turnover_top2000.csv.gz"
@@ -63,18 +64,33 @@ def coverage(df, col, label):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--no-akshare", action="store_true",
+                    help="QMT-only 模式：只用库内换手率，不读 akshare（需先 backfill_turnover_qmt.py 补全 2025-2026）")
+    args = ap.parse_args()
+
     print("=== 1) 读取库内换手率（2020-2026）===")
     db = load_db()
     print(f"  DB 行数: {len(db):,}  非空: {db['turnover_db'].notna().sum():,}")
     coverage(db, "turnover_db", "库内(直接读+float_shares反算)")
 
-    print("\n=== 2) 读取 akshare 换手率（2025-2026, ÷100）===")
-    ak = load_ak()
-    print(f"  AK 行数: {len(ak):,}  非空: {ak['turnover_ak'].notna().sum():,}")
-    coverage(ak, "turnover_ak", "akshare")
+    ak = None
+    if not args.no_akshare:
+        print("\n=== 2) 读取 akshare 换手率（2025-2026, ÷100）===")
+        ak = load_ak()
+        print(f"  AK 行数: {len(ak):,}  非空: {ak['turnover_ak'].notna().sum():,}")
+        coverage(ak, "turnover_ak", "akshare")
+    else:
+        print("\n=== 2) [QMT-only] 跳过 akshare ===")
 
     print("\n=== 3) 合并（库内优先，缺口用 akshare 补）===")
-    merged = db.merge(ak, on=["asset_code", "trade_date"], how="outer")
+    if ak is None:
+        # QMT-only 模式：不读 akshare，缺口留空
+        merged = db.copy()
+        merged["turnover_ak"] = np.nan
+        print("  [QMT-only] 不使用 akshare")
+    else:
+        merged = db.merge(ak, on=["asset_code", "trade_date"], how="outer")
     merged["turnover_rate"] = merged["turnover_db"].fillna(merged["turnover_ak"])
     src = np.where(merged["turnover_db"].notna(), "db",
                    np.where(merged["turnover_ak"].notna(), "ak", "none"))
