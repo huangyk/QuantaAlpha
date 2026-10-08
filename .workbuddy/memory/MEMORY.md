@@ -63,3 +63,11 @@ IC 与「小盘程度」单调正相关 → 那是**风格/流动性因子**不�
 后端 conda `quantaalpha` 跑 `frontend-v2/backend/app.py` → :8000
 前端 **`cd frontend-v2 && PATH="/d/nvm4w/nodejs:$PATH" npm run dev`** → :3000（nvm node v24.9.0）
 ⚠ 勿直跑 vite.js、勿用托管 node。健康接口 `/api/health`（无 `/api/experiments`）。
+
+### UI 实现约定（2026-10-09 核对后确立，报告 `docs/ui_audit_20261009.md`）
+- **主题**：深灰+蓝紫。tailwind 配了 `darkMode:'class'`，靠 `index.html` 的 `<html class="dark">` 启用；
+  浅/深两套 CSS 变量并存。**改深色时 `.glass`/`.glass-strong` 必须整套替换**，否则白玻璃浮在深灰底上。
+- **导航**：左侧 `<aside fixed left-0 w-[72px] lg:w-64>`（窄屏只显示图标）。
+  ⚠ 任何 `fixed bottom-0 left-0 right-0` 的元素（如 ChatInput）都要加 `ml-[72px] lg:ml-64` 让开侧栏。
+- **空状态统一用** `components/ui/EmptyState.tsx`（此前有两套不一致实现）。
+- **JSX： `return (` 后面不能直接跟 `{/* 注释 */}`** → 会被解析成对象字面量而报错，注释放 return 前。
