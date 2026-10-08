@@ -33,8 +33,40 @@ LLM 驱动 Alpha 因子挖掘框架（vendoring rdagent==0.8.0）。因子 `quan
 - 统一面板 `data/cache/turnover_unified_2020_2026.parquet`（DB优先+akshare补缺口÷100，`volume×100/float_shares`反算）。
 - 回填 `tools/backfill_turnover_qmt.py`（沙箱xtdata取数segfault，须在QMT正常机器跑）；面板 `tools/build_turnover_panel.py --no-akshare`。
 
-## Web 启动
-`frontend-v2/backend/app.py`(FastAPI:8000, quantaalpha环境) + `node_modules/vite/bin/vite.js`(Vite:3000, nvm node)；`npm-cli.js`路径不存在，直跑vite.js。
+## Web 工作台启动（用户提供正：必须用 npm run dev）
+- 后端：conda `quantaalpha` 跑 `frontend-v2/backend/app.py` → :8000
+- 前端：**`cd frontend-v2 && PATH="/d/nvm4w/nodejs:$PATH" npm run dev`** → :3000（nvm node v24.9.0/npm 11.6.0）
+  ⚠ 不要直跑 `node_modules/vite/bin/vite.js`，也不要用托管 node——用户环境不是这样
+- vite proxy 已配 `/api`、`/ws` → :8000；健康接口是 `/api/health`（**没有 /api/experiments**）
+
+## ★ 网上 QMT 策略调研（2026-10-08，见 docs/qmt_strategy_references.md）
+- 首推 **github.com/guoyaohua/etf-adaptive-rotation-qmt**：逆波动率权重+波动率上限10%
+  +**四周错峰A/B/C/D sleeve**+相关性去重+ATR止损+前缀不变性测试。
+  自报 CAGR 5.83%/回撤6.46%/夏普1.004（诚实，非30%）。
+  → **其低回撤主要来自组合层/风控层(L4)，不是信号层**，与本项目结论一致。
+- 看任何策略先过三条：滚动窗口最差值、2×/3×成本压力、防未来数据验证。
+  本站已亲手证伪"聚宽25日动量×R²年化30%"（真实4.6~10.1%，LB=25无优势）。
+
+## ★★★ QMT datadir 直读（2026-10-08，破局：绕开 segfault、不用 akshare）
+QMT 实盘终端装在本机 `D:/中航证券QMT实盘-交易端/datadir`（xtquant segfault 只因客户端没跑，
+本地文件可直接读 → 最权威 QMT 数据，不违反"禁用akshare"硬规则）。
+- `{SH,SZ}/86400/<6位>.DAT` = **8B头 + 64B记录(16×int32小端)**：
+  `[0]Unix时间戳 [1..4]OHLC(×1000) [6]成交量(手) [8]成交额(元)`；86400=日线，300=5分钟。
+- 脚本 `tools/backfill_etf_qmt_local.py --clean-legacy`（含拆份修正+清旧数据）。
+- **坑1**：`bars_1d` 唯一键是 `(asset_code, ts)` 非 trade_date，ts 须 **北京时间午夜**，
+  否则同日插两行。按 (asset_code, trade_date) 先删再插。
+- **坑2**：datadir 是**未复权**，ETF 份额拆分造成假暴跌(−87%/−73%/−51%/+176%)。
+  修法：收盘/昨收超 ±35%/+50% → 吸附整数比例(**用收盘判据，开盘判据会漏判**)。修8处。
+- **坑3**：旧 `qmt` ETF 数据损坏(159915/159949/159922 缺整段2025；159919 +159%) → 踢出池。
+
+## ★ 七星高照跨资产 ETF 轮动（2026-10-08 终审）— 见 docs/qixing_etf_verdict.md
+34只干净跨资产池、2019-2026、万1佣金。**网上32%无法复现。**
+- 池等权买入持有 = **+9.3%/夏普0.65/回撤−22.2%/换手1次**（同口径基准，最优）
+- 最好轮动 月频top2+门槛 = +10.0%/夏普0.43/回撤−25.4% → 仅微超但风险调整更差
+- 日频top1/top3 仅 +7.0~7.1%、夏普0.23~0.35；LB扫描15~35呈噪声带 → **LB=25是过拟合**
+- **换手=最大成本**：日频1474次→+7.0%，月频91次→+9.3%，零换手→夏普最优。再证杠杆在L4。
+- 落地：跨资产ETF等权分散 + 月频再平衡 + 换仓门槛 + 5步框架择时/止损止盈（②选股仍不可用）。
+  ⚠ +9.3% 是窗口 beta（纳指/黄金强势），**非可持续 alpha，勿加杠杆**。
 
 ## 优化方向（破局，非日线选股）
 补行业分类+市值+涨跌停/ST做真中性化；执行层降换股率（杠杆在L4不在L2）；换成熟成分股池。当前无验证通过的alpha，任何新因子须先显著跑赢同池等权。
