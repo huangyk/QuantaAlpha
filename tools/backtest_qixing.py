@@ -34,6 +34,7 @@ DEFAULT_POOL = ["510300.SH", "510500.SH", "512100.SH", "159915.SZ",
 COMM_RATE = 0.0001      # 万1 (用户实际)
 STAMP_RATE = 0.0        # ETF 免印花税
 TRANSFER_RATE = 0.00001 # 过户费 (ETF 通常免, 保守留微量)
+CLEAN_SOURCE = "qmt_local_86400"   # 本脚本回填的干净 QMT 本地数据来源
 
 
 def conn():
@@ -84,11 +85,9 @@ def weighted_log_momentum(close_series, lb):
 
 def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False):
     data = load_etf(cur, codes, start, end)
-    # 统一交易日 (取交集, 至少要有 lb+5 日)
+    # 统一交易日: 取并集(各 ETF 上市日不同, 早上市的晚加入轮动, 不再强制交集)
     all_days = sorted(set().union(*[set(g.index) for g in data.values()]))
-    # 每个 code 的可用日
-    avail = {c: set(g.index) for c, g in data.items()}
-    days = [d for d in all_days if all(d in avail[c] for c in codes)]
+    days = all_days
     if len(days) < lb + 5:
         print("ERROR 数据不足"); return None, None
     # 预计算每只每日的 (score, close, volume, ma20_vol, ret5, max3d_drop, above_ma20)
@@ -132,12 +131,17 @@ def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False):
         if rebalance == "h":   # 买入持有: 绕过过滤, 首日全仓
             target = list(codes)
         # 今日收益: 用当前 hold (昨日决定的) 的当日涨跌幅
+        # ⚠️ 并集交易日下 g.index != days, 必须用 .loc 按日期取; 用 .iloc[k] 会张冠李戴
         if hold:
             day_ret = 0.0; n = 0
+            prev_d = days[i - 1] if i > 0 else None
             for c in hold:
-                g = data[c]; k = idx_of[d]
-                if k >= 1 and pd.notna(g["close"].iloc[k]) and pd.notna(g["close"].iloc[k - 1]) and g["close"].iloc[k - 1] > 0:
-                    day_ret += g["close"].iloc[k] / g["close"].iloc[k - 1] - 1; n += 1
+                g = data[c]
+                ct = g["close"].get(d)
+                cp = g["close"].get(prev_d) if prev_d is not None else None
+                if (ct is not None and cp is not None
+                        and pd.notna(ct) and pd.notna(cp) and cp > 0):
+                    day_ret += ct / cp - 1; n += 1
             if n: cash *= (1 + day_ret / n)
         # 调仓判定 (今日信号决定明日 hold)
         do_rb = False
@@ -182,14 +186,32 @@ def main():
     ap.add_argument("--lb", type=int, default=25)
     ap.add_argument("--lb-sweep", nargs=2, type=int, default=None, help="扫动量窗口 lo hi")
     ap.add_argument("--top-n", type=int, default=1)
-    ap.add_argument("--rebalance", default="d", choices=["d", "m", "q"])
+    ap.add_argument("--rebalance", default="d", choices=["d", "m", "q", "h"],
+                    help="d日/m月/q季/h买入持有(池等权基准)")
     ap.add_argument("--switch", type=float, default=0.0)
     ap.add_argument("--commission", type=float, default=0.0001)
+    ap.add_argument("--cross", action="store_true",
+                    help="加载库内全部 asset_type='etf' 代码做跨资产轮动")
+    ap.add_argument("--clean-only", action="store_true",
+                    help="只用单一干净来源(qmt_local_86400)的 ETF; 排除旧 qmt 损坏数据")
+    ap.add_argument("--min-days", type=int, default=0,
+                    help="过滤历史不足该天数的 ETF(默认0=不过滤)")
     args = ap.parse_args()
     global COMM_RATE
     COMM_RATE = args.commission
 
     c = conn(); cur = c.cursor()
+    if args.cross:               # 跨资产池: 库内全部 ETF, 可选过滤
+        if args.clean_only:
+            # 旧 'qmt' 数据存在整段缺失(2025)与未修拆份, 只取单一干净来源的标的
+            cur.execute("""select asset_code from bars_1d where asset_type='etf'
+                           group by asset_code having count(distinct source)=1
+                             and max(source)=%s order by 1""", (CLEAN_SOURCE,))
+        else:
+            cur.execute("""select distinct asset_code from bars_1d
+                           where asset_type='etf' order by 1""")
+        args.pool = [r[0] for r in cur.fetchall()]
+        print(f"跨资产池: {len(args.pool)} 只 ETF (clean_only={args.clean_only})")
     if args.lb_sweep:
         lo, hi = args.lb_sweep
         print(f"动量窗口鲁棒性扫描 ({lo}~{hi}, top_n={args.top_n}, reb={args.rebalance}, switch={args.switch})")
