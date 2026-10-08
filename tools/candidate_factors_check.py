@@ -77,7 +77,7 @@ def main():
     F = pd.concat(frames).sort_index()
 
     C = df['$close'].unstack('instrument').sort_index()
-    amt_day = C * df['$volume'].unstack('instrument').reindex_like(C)   # date × instrument
+    amt_day = C * df["$volume"].unstack("instrument").reindex_like(C) * 100.0
     # 正确对齐：T 日收盘出分 → T+1 开盘买入 → T+1+H 卖出。用开盘价更贴近可执行。
     O = df['$open'].unstack('instrument').sort_index()
     buy_px = O.shift(-1)

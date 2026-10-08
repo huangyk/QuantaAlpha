@@ -54,7 +54,7 @@ def main():
     inst = df.index.get_level_values('instrument')
     c = df['$close']
     v = df['$volume']
-    amt = (c * v)
+    amt = (c * v) * 100.0   # volume 单位是「手」，成交额需 ×100
     print(f"样本: {len(df):,} 行  {inst.nunique()} 只  "
           f"{df.index.get_level_values('datetime').min().date()} ~ "
           f"{df.index.get_level_values('datetime').max().date()}")

@@ -40,7 +40,7 @@ def main():
     O = d['$open'].unstack('instrument').sort_index()
     C = d['$close'].unstack('instrument').sort_index()
     V = d['$volume'].unstack('instrument').reindex_like(C)
-    AMT = (C * V)
+    AMT = (C * V) * 100.0   # volume 单位是「手」，成交额需 ×100
     ret = (O.shift(-1) / O - 1.0).clip(-0.5, 0.5)
     listing = C.notna().cumsum()
     amt20 = AMT.rolling(20, min_periods=5).mean()

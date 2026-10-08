@@ -50,7 +50,7 @@ def build(panels):
         d['close'] = c
         d['prev_close'] = pc
         d['open_ret'] = o / pc - 1.0                       # 开盘跳空
-        d['amt'] = c * v                                   # 成交额近似（元）
+        d['amt'] = c * v * 100.0                            # 成交额（元）；volume 单位是「手」
         # T+1 收盘 → T+2 开盘的收益（对应"T+1开盘买 T+2开盘卖"的持有段）
         d['fwd_hold'] = o.shift(-1) / o - 1.0
         # 一字板：四价合一且涨幅达板

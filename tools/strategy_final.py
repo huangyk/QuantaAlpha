@@ -38,7 +38,7 @@ def main():
     C = d['$close'].unstack('instrument').sort_index()
     V = d['$volume'].unstack('instrument').reindex_like(C)
     O = d['$open'].unstack('instrument').sort_index()
-    AMT = C * V
+    AMT = C * V * 100.0   # volume 单位是「手」，成交额需 ×100
     ret = (C.shift(-1) / C - 1.0).clip(-0.5, 0.5)
     listing = C.notna().cumsum()
     mature = listing >= 500

@@ -84,7 +84,7 @@ def main():
     print("载入全 A 日线 ...")
     O, C, V = load_all()
     print(f"  面板: {C.shape[0]} 天 × {C.shape[1]} 只")
-    AMT = (C * V)
+    AMT = (C * V) * 100.0   # volume 单位是「手」，成交额需 ×100
     listing = C.notna().cumsum()                       # 上市天数
     amt_med = AMT.rolling(60).median()
 

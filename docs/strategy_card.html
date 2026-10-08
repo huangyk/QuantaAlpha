@@ -105,7 +105,7 @@ code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:13px}
 <tr><td>13:05</td><td class="neg">仅便宜 5.83 bp</td><td><b>避开</b></td></tr>
 </table>
 <ul>
-<li><b>拆单到全天</b>：集中单一 5min 时段冲击 30.1bp，全天分散 9.5bp，<b>差 3 倍</b></li>
+<li><b>拆单到全天</b>：集中单一 5min 时段冲击 3.0bp，全天分散 1.0bp，<b>差 3 倍</b>（绝对值小，<b>拆单的价值主要是心理与滑点保护，不是省bp</b>）</li>
 <li>卖出若必须，选 10:00~10:30（早盘冲高，相对高位）；次选 13:05 / 15:00</li>
 </ul>
 
@@ -118,13 +118,21 @@ code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:13px}
 
 <h2>容量与风险</h2>
 <table>
-<tr><th>项目</th><th>实测</th></tr>
-<tr><td>1000 万账户持 252~362 只</td><td class="pos">participation 4~8%，可执行</td></tr>
-<tr><td>1000 万账户持 30 只</td><td class="neg">participation 23%，不可执行</td></tr>
-<tr><td>5000 万以上</td><td class="neg">必须换池（池内单票日成交额中位仅 429 万，99.25% 不足 1 亿）</td></tr>
+<tr><th>项目</th><th>实测（2026-10-08 按真实成交额更正）</th></tr>
+<tr><td>池内单票日成交额中位</td><td><b>4.29 亿元</b></td></tr>
+<tr><td>1000 万账户 / 30 只</td><td class="pos">participation 0.08%，冲击 1.0bp —— 可执行</td></tr>
+<tr><td><b>1 亿账户 / 30 只</b></td><td class="pos">participation 0.78%，冲击 3.0bp —— <b>可执行</b></td></tr>
+<tr><td>1 亿账户 / 10 只</td><td class="pos">participation 7.8%，冲击 9.5bp —— 仍可执行</td></tr>
+<tr><td>一次换手真实成本</td><td><b>约 12 bp</b>（10bp 佣金+印花税 + 2bp 冲击）</td></tr>
 <tr><td>最大回撤</td><td class="neg">−35.88%（2022 / 2024 两轮下跌）</td></tr>
 <tr><td>尾部风险</td><td class="neg">跌停开盘单日最高 83.57%，极端日无法止损 —— 本战法接受的代价</td></tr>
 </table>
+<div class="warn">
+<b>2026-10-08 更正</b>：此前版本称「容量上限 1000 万、单次换手 29~70bp」，
+源于把 Qlib/TimescaleDB 的 <code>volume</code>（单位「手」）误当作「股」，
+导致成交额被低估 100 倍。战法的<b>年化收益不受影响</b>（建仓成本仅占 18.5bp），
+但<b>容量结论放宽到数亿资金</b>。
+</div>
 
 <h2>怎么用（代码）</h2>
 <pre style="background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow:auto;font-size:13px;line-height:1.6"><code>from quantaalpha.strategy.pool_hold import (
