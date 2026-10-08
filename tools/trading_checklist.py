@@ -72,6 +72,7 @@ def step1_market(cur, as_of):
     env = {}
     for code, name in INDICES.items():
         s = idx[idx.code == code].sort_values("date").set_index("date")["close"].sort_index()
+        s = s[s.index <= as_of_d]          # 截断到 as_of，避免偷看未来(指定历史日时关键)
         if len(s) < 60:
             continue
         ma20, ma60 = s.rolling(20).mean().iloc[-1], s.rolling(60).mean().iloc[-1]
@@ -88,6 +89,7 @@ def step1_market(cur, as_of):
         (as_of - pd.Timedelta(days=65),))
     sc = pd.DataFrame(stock_close, columns=["code", "date", "close"])
     sc["date"] = pd.to_datetime(sc["date"])
+    sc = sc[sc["date"] <= as_of]            # 截断到 as_of，避免偷看未来
     breadth = np.nan
     if len(sc):
         g = sc.sort_values(["code", "date"])
@@ -105,10 +107,11 @@ def step2_universe(cur, as_of, min_amount, topn):
     # 近 25 日 OHLC+amount（算流动性 / 涨停过滤）
     base = sql(cur,
         """select asset_code, trade_date, open, close, amount from bars_1d
-           where asset_type='stock' and trade_date >= %s
+           where asset_type='stock' and trade_date >= %s and trade_date <= %s
            order by asset_code, trade_date""",
-        (as_of - pd.Timedelta(days=35),))
+        (as_of - pd.Timedelta(days=35), as_of))
     b = pd.DataFrame(base, columns=["code", "date", "open", "close", "amount"])
+    b["date"] = pd.to_datetime(b["date"])   # 统一为 Timestamp，避免 date/Timestamp 比较隐患
     # 上市天数（数据长度）过滤
     cnt = sql(cur,
         """select asset_code, count(*) from bars_1d where asset_type='stock'
@@ -119,7 +122,7 @@ def step2_universe(cur, as_of, min_amount, topn):
         if code not in mature:
             continue
         g = g.sort_values("date")
-        if g.date.iloc[-1] != as_of_d:
+        if g.date.iloc[-1] != pd.Timestamp(as_of):
             continue  # as_of 无数据（停牌/新）
         amt_med = g["amount"].tail(20).median()
         if not (amt_med >= min_amount):
@@ -145,10 +148,12 @@ def step2_universe(cur, as_of, min_amount, topn):
 def fetch_history(cur, codes, as_of, days):
     rows = sql(cur,
         """select asset_code, trade_date, open, high, low, close, volume
-           from bars_1d where asset_code = any(%s) and trade_date >= %s
+           from bars_1d where asset_code = any(%s) and trade_date >= %s and trade_date <= %s
            order by asset_code, trade_date""",
-        (list(codes), as_of - pd.Timedelta(days=days)))
-    return pd.DataFrame(rows, columns=["code", "date", "open", "high", "low", "close", "volume"])
+        (list(codes), as_of - pd.Timedelta(days=days), as_of))
+    h = pd.DataFrame(rows, columns=["code", "date", "open", "high", "low", "close", "volume"])
+    h["date"] = pd.to_datetime(h["date"])
+    return h
 
 
 def step3_position(hist, as_of):
@@ -156,7 +161,7 @@ def step3_position(hist, as_of):
     out = {}
     for code, g in hist.groupby("code"):
         g = g.sort_values("date")
-        if g.date.iloc[-1] != as_of_d or len(g) < 60:
+        if g.date.iloc[-1] != pd.Timestamp(as_of) or len(g) < 60:
             continue
         c = g["close"]
         ma20 = c.rolling(20).mean().iloc[-1]
