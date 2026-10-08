@@ -3,15 +3,25 @@ backfill_turnover_qmt.py — 用 QMT 把 2025-2026 缺失的换手率/流通股�
 
 背景（2026-10-08 根因排查）：
 - bars_1d.turnover_rate 在 2020-2024 覆盖 ~94%（来自 QMT，经 sync_to_db.py 的
-  _add_turnover_rate 取 QMT 的 turnoverRate 列或 volume/floatVol*100 反算）。
+  _add_turnover_rate 取 QMT 的 turnoverRate 列或 volume/FloatVolume*100 反算）。
 - 2025 = 0%、2026 = 14.7% 为空：因为那批行是用 quant_datahub/datahub/qmt.py 进的库，
   其 fetch_bars 只映射 6 个字段、把 turnover_rate/float_shares 过滤掉了。
   —— 不是 QMT 没有，是入库 ETL 漏取。
-- 本脚本复用 sync_to_db.py 的同源逻辑，只回填缺口（trade_date>=2025 且 turnover_rate 为 NULL），
-  不重拉价格，安全幂等（ON CONFLICT DO UPDATE）。
 
-注意：本脚本依赖 xtdata 历史下载服务可用（QMT 客户端登录且数据服务正常）。
-在 WorkBuddy 沙箱里 xtdata.download_history_data2 当前会 segfault，需在 QMT 正常的机器上运行。
+本脚本复用 sync_to_db.py 的同源逻辑，只回填缺口
+（trade_date>=2025 且 turnover_rate 为 NULL 的 (asset_code, trade_date)），
+不重拉价格、不 INSERT 新行（UPDATE ... WHERE turnover_rate IS NULL），安全幂等。
+
+单位口径（与库内 2020-2024 一致）：
+- QMT turnoverRate 列为「小数」（如 0.038 = 3.8%），直接存；
+- 反算公式 volume/FloatVolume*100（volume 单位=手），结果亦为小数换手率。
+
+运行环境：
+- 依赖 xtdata 历史下载服务可用（QMT 客户端登录且数据服务正常）。
+- 实测 2026-10-08：WorkBuddy 沙箱里 xtdata 的取数接口
+  (get_local_data / get_market_data) 稳定 segfault（C 层崩溃），只有
+  connect()/download_history_data2() 可用。因此本脚本须在 QMT 正常的机器上运行
+  （即当初成功灌入 2020-2024 的那台），不能在沙箱端到端跑。
 运行：python tools/backfill_turnover_qmt.py
 """
 import warnings
@@ -36,8 +46,15 @@ def gap_codes(cur):
     return [r[0] for r in cur.fetchall()]
 
 
+def _parse_date(ts_raw):
+    """xtdata 返回的 index 通常是 int/str 形态的 YYYYMMDD。
+    复用 sync_to_db._parse_datetime_index 的逻辑，避免 int 被当成纳秒 epoch。"""
+    return pd.to_datetime(str(ts_raw), errors="coerce")
+
+
 def fetch_qmt(codes):
-    """从 QMT 取日线 + 换手率 + 流通股。返回 list of record dict。"""
+    """从 QMT 取日线 + 换手率 + 流通股。返回 list of record dict。
+    口径与 sync_to_db._add_turnover_rate 完全一致。"""
     from xtquant import xtdata
     xtdata.enable_hello = False
     xtdata.connect()
@@ -50,59 +67,78 @@ def fetch_qmt(codes):
     for code, df in (raw or {}).items():
         if df is None or len(df) == 0:
             continue
-        # turnover_rate：优先 QMT 原生 turnoverRate 列
+        # turnover_rate：优先 QMT 原生 turnoverRate 列（小数）
         if "turnoverRate" in df.columns and not df["turnoverRate"].isna().all():
             tr = df["turnoverRate"]
         else:
-            tr = pd.Series(index=df.index, dtype=float)  # 缺失则留空，下面用 floatVol 反算
-        # 流通股：从合约详情取（只在 turnoverRate 缺失时反算需要）
+            tr = pd.Series(index=df.index, dtype=float)
+        # 流通股/总股本：从合约详情取（反算用）
         detail = {}
         try:
             detail = xtdata.get_instrument_detail(code) or {}
         except Exception:
             detail = {}
         float_vol = None
-        for k in ("FloatVolume", "float_volume", "FloatShares", "float_shares"):
+        for k in ("FloatVolume", "float_volume", "FloatShares", "float_shares",
+                  "FloatCapital", "AFloatShare", "a_float_share"):
             if detail.get(k):
-                float_vol = float(detail[k]); break
-        for ts, row in df.iterrows():
-            d = pd.Timestamp(ts).normalize()
+                try:
+                    fv = float(detail[k])
+                    if fv > 0:
+                        float_vol = fv
+                        break
+                except Exception:
+                    pass
+        total_vol = None
+        for k in ("TotalVolume", "total_volume", "total_shares", "TotalShares",
+                  "TotalCapital", "AStockNum", "a_stock_num"):
+            if detail.get(k):
+                try:
+                    tv = float(detail[k])
+                    if tv > 0:
+                        total_vol = tv
+                        break
+                except Exception:
+                    pass
+        # 逐行（index 为 YYYYMMDD 形态）
+        dates = pd.to_datetime(pd.Index([str(x) for x in df.index]), errors="coerce")
+        for i, ts_raw in enumerate(df.index):
+            d = dates[i]
+            if pd.isna(d):
+                continue
+            row = df.iloc[i]
             v = row.get("volume")
-            trv = tr.loc[ts] if ts in tr.index else None
+            trv = tr.iloc[i] if i < len(tr) else None
             if pd.notna(trv) and trv and trv == trv:
                 turnover = float(trv)
             elif float_vol and v:
-                # volume 单位可能手/股，统一按 sync_to_db 公式 volume/float_vol*100
                 turnover = (float(v) / float_vol) * 100.0
             else:
                 turnover = None
-            total_v = None
-            for k in ("TotalVolume", "total_volume", "TotalShares", "total_shares"):
-                if detail.get(k):
-                    total_v = float(detail[k]); break
             records.append({
                 "asset_code": str(code),
-                "ts": d,
+                "trade_date": d.date(),   # 匹配 bars_1d.trade_date (date)
                 "turnover_rate": turnover,
                 "float_shares": float_vol,
-                "total_shares": total_v,
+                "total_shares": total_vol,
                 "capital": float_vol,
             })
     return records
 
 
 def upsert(cur, records):
+    """按 (asset_code, trade_date) 精准更新缺口行（turnover_rate IS NULL），
+    绕开 ts 时区歧义，不 INSERT 新行，安全幂等。"""
     sql = """
-        INSERT INTO bars_1d (ts, asset_code, turnover_rate, float_shares, total_shares, capital)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (asset_code, ts) DO UPDATE SET
-            turnover_rate = COALESCE(EXCLUDED.turnover_rate, bars_1d.turnover_rate),
-            float_shares = COALESCE(EXCLUDED.float_shares, bars_1d.float_shares),
-            total_shares  = COALESCE(EXCLUDED.total_shares, bars_1d.total_shares),
-            capital       = COALESCE(EXCLUDED.capital, bars_1d.capital)
+        UPDATE bars_1d SET
+            turnover_rate = COALESCE(%s, turnover_rate),
+            float_shares  = COALESCE(%s, float_shares),
+            total_shares  = COALESCE(%s, total_shares),
+            capital       = COALESCE(%s, capital)
+        WHERE asset_code = %s AND trade_date = %s AND turnover_rate IS NULL
     """
-    rows = [(r["ts"], r["asset_code"], r["turnover_rate"], r["float_shares"],
-            r["total_shares"], r["capital"]) for r in records]
+    rows = [(r["turnover_rate"], r["float_shares"], r["total_shares"], r["capital"],
+             r["asset_code"], r["trade_date"]) for r in records]
     cur.executemany(sql, rows)
 
 
@@ -124,7 +160,9 @@ def main():
     codes = gap_codes(cur)
     print(f"需回填标的数: {len(codes)}")
     if not codes:
-        print("无缺口，无需回填。"); return
+        print("无缺口，无需回填。")
+        conn.close()
+        return
     done = 0
     for i in range(0, len(codes), BATCH):
         batch = codes[i:i+BATCH]
