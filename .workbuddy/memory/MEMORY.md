@@ -219,6 +219,46 @@ P0 = 可交易过滤 + 成本模型校准 + 日内买卖时点(5min) + 换手惩
   成本从 12.46% 降到 4.34%/年后净超额 +8.94%（t=0.42），
   而**分位组 D1（Top20）日均超额 −6.10bp 本身就是跑输基准** → 不是成本问题，是选股无效
 
+## ★★★ 池构建 bug（2026-10-08 修正，结论翻转）
+`liq.index[:N]` 取的是 **pandas 列的字母序**，不是成交量排名 —— 漏了 `sort_values`。
+症状：候选池只有 45~65 只（而非 500），且"Top500"其实是一批随机股票。
+修正：`liq = AMT.loc[:d_prev].tail(60).median().dropna().sort_values(ascending=False)`
+**修正后结论翻转**（13 年长周期年化）：
+
+| 层 | 全期 | 2021后 | 2025起 |
+|---|---|---|---|
+| 流动性 Top500 | +2.02% | −4.04% | −2.97% |
+| 501-1000 | +2.66% | −2.55% | −1.42% |
+| 1001-2000 | +2.36% | −2.53% | −1.26% |
+| **2000名以后** | **+2.89%** | **−1.41%** | **−0.10%** |
+| 全部成熟 | +2.58% | −1.97% | −0.58% |
+
+→ **「低流动性长期跑赢」是真实规律**（修正前误判为 Top500 更优）。
+→ 战法池建议改为**流动性中后段（1001~3000 名）**，不是 Top500。
+**铁律：任何 `.index[:N]` 取池子前，必须确认 index 已按目标指标排序。**
+
+## ★ 换手率因子通过真正的样本外 IC 检验（2026-10-08）
+2025-2026 换手率用 **akshare（东财）新拉**（miniQMT 不提供，见下），脚本运行前从未见过：
+- f1 换手水平 RankIC：train2020-21 −0.0691 / valid2022 −0.0814 / test2023-24 −0.0764
+  → **OOS2025 −0.0382(t=−2.78) / OOS2026 −0.0395(t=−2.14)** → **首次通过完整样本外 IC 检验**
+- 但策略仍无增益：2025-2026「剔除换手最高 10%/20%」年化超额仅 **−0.37%**（t=−0.84 / −0.45）
+- 分位组**倒 U 型**（D1 +20.8 → D9 +86.7 → D10 +49.0），alpha 只存在于极端档
+→ **第五次验证「正 IC ≠ 可提取 alpha」**（原因最清楚的一次）
+
+## ★ miniQMT 不提供换手率/股本（2026-10-08 实测排除）
+- `get_market_data_ex` 只返回 open/high/low/close/volume/amount + preClose/suspendFlag，
+  **turnoverRate / totalValue / totalVolume 全部 MISS**
+- `get_financial_data` 的 9 个报表（BalanceInfo/CapitalStockStructure/…）**全部 shape=(0,0)**
+  → 财务数据是完整版 QMT 的功能，**mini 版没有**
+- 签名注意：本版本（xtquant 250807）是 `table_list` 而非旧文档的 `report_name`
+- ⚠️ `xtdata.enable_hello = False` 会触发 C++ 断言崩溃（`Assertion failed: u < 10000000`），**不要设这行**
+- 线程池里 akshare 必须**每个 worker 惰性 import**（全局变量不会继承到子线程）
+- **可用替代：akshare 1.18.31**（base conda 环境），`stock_zh_a_hist(symbol='600000', period='daily',
+  start_date=, end_date=, adjust='qfq')` → 直接含**换手率/振幅/涨跌幅**，
+  数据与 QMT 完全一致（600000 的 2026-09-30 成交量 1474848 逐位相同）
+- 拉取脚本 `tools/fetch_turnover_akshare.py`：并发 6、约 5 只/秒、成功率 74%（失败为 ProxyError），
+  Top2000 耗时 7 分钟 → `data/cache/akshare_turnover_top2000.csv.gz`（1486 只 / 615,612 行）
+
 ## 旧项目 D:\qqmt\code 关键事实
 - 数据库：psycopg3+psycopg_pool，无 ORM；连接串由 `config/db_config.json` 同字段在多处拼出；建表全靠 `data_pipeline/schema.py` 内嵌 DDL（无 Alembic/create_hypertable）。
 - TimescaleDB 容器沿用旧项目；但 **timescaledb 扩展从未安装**，`bars_5m` 是普通表，无 chunk_time_interval/retention/压缩策略（上一轮审计结论）。
