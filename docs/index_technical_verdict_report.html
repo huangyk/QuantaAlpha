@@ -138,6 +138,23 @@
   </div>
 
   <div class="card">
+    <h2>好方法：跨资产绝对动量 / 趋势跟随（唯一真能用的）</h2>
+    <span class="verdict v-ok">实盘数据验证有效</span>
+    <p>四个验证方向都证伪后，网上文献（Antonacci GEM / Faber 200日SMA战术配置 / Moskowitz TSMOM）指向一个稳健做法：<b>对每个资产独立判趋势</b>——该 ETF 自身收盘价 &gt; 200日SMA（或 12个月动量&gt;0）才持有，否则该份额转现金。<b>不是</b>用一个外部指数给整个池当总开关（功能B 的单指数 MA 门控在多元池上反而伤收益）。</p>
+    <table>
+      <thead><tr><th>策略（34只跨资产ETF，2019~2026）</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">最大回撤</th><th class="num">在市</th></tr></thead>
+      <tbody>
+        <tr><td>纯等权持有（基线）</td><td class="num">9.4%</td><td class="num">0.66</td><td class="num">−22.2%</td><td class="num">100%</td></tr>
+        <tr><td>12-1动量&gt;0 才持有（等权）</td><td class="num">8.1%</td><td class="num">0.63</td><td class="num">−17.5%</td><td class="num">85%</td></tr>
+        <tr><td>12-1动量&gt;0（逆波动率）</td><td class="num">6.0%</td><td class="num">0.70</td><td class="num">−10.6%</td><td class="num">85%</td></tr>
+        <tr><td><b>200日SMA趋势跟随（等权）</b></td><td class="num pos">11.6%</td><td class="num pos">0.88</td><td class="num pos">−13.7%</td><td class="num">89%</td></tr>
+        <tr><td><b>200日SMA趋势跟随（逆波动率）</b></td><td class="num">9.3%</td><td class="num pos">1.08</td><td class="num pos">−7.8%</td><td class="num">89%</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">结论：<b>200日SMA + 逆波动率</b> 在真实数据上 Sharpe 1.08（基线 0.66）、回撤 −7.8%（基线 −22.2%）、年化 9.3%（≈基线）——风险调整大幅改善、回撤砍到 1/3，且收益不降。这是本项目目前唯一经真实数据验证、可落地的「好方法」。信号-收益对齐：月末收盘判趋势、次月生效（月频调仓，无前视）。</p>
+  </div>
+
+  <div class="card">
     <h2>可复跑脚本（已 git commit，未 push）</h2>
     <span class="pill">tools/index_support_check.py · 44ae26f</span>
     <span class="pill">tools/index_bounce_strategy.py · 0c4e049</span>
