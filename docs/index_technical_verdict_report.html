@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>指数技术打法验证总报告 · 2026-10-09</title>
+<style>
+  :root{
+    --bg:#15171c; --panel:#1d2027; --panel2:#23262f; --line:#2c303a;
+    --txt:#e6e8ee; --sub:#9aa3b2; --accent:#8b7bff; --accent2:#5b8cff;
+    --red:#ff6b6b; --green:#3ddc97; --amber:#ffb74d;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;padding:32px 20px 80px}
+  .wrap{max-width:920px;margin:0 auto}
+  h1{font-size:26px;font-weight:700;letter-spacing:.5px}
+  h1 .tag{font-size:13px;color:var(--accent);border:1px solid var(--accent);padding:2px 8px;border-radius:20px;vertical-align:middle;margin-left:10px}
+  .sub{color:var(--sub);font-size:13px;margin-top:6px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-top:18px}
+  .card h2{font-size:18px;margin-bottom:4px;display:flex;align-items:center;gap:10px}
+  .card h2 .n{background:var(--accent);color:#0c0e12;width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
+  .verdict{display:inline-block;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600;margin:8px 0}
+  .v-dead{background:rgba(255,107,107,.15);color:var(--red);border:1px solid var(--red)}
+  .v-weak{background:rgba(255,183,77,.15);color:var(--amber);border:1px solid var(--amber)}
+  .v-ok{background:rgba(61,220,151,.15);color:var(--green);border:1px solid var(--green)}
+  p{margin:8px 0;color:#d4d8e2;font-size:14.5px}
+  .muted{color:var(--sub);font-size:13px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--sub);font-weight:600}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .neg{color:var(--red)} .pos{color:var(--green)}
+  .synthesis th{background:var(--panel2)}
+  .callout{background:var(--panel2);border-left:3px solid var(--accent);border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px}
+  .code{font-family:"SF Mono",Consolas,monospace;font-size:12.5px;color:#b9c0d0;background:#11131a;padding:10px 14px;border-radius:8px;display:block;white-space:pre-wrap;margin:8px 0}
+  .foot{margin-top:24px;color:var(--sub);font-size:12.5px;text-align:center}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:12px;color:var(--sub);margin:2px 4px 2px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>指数技术打法验证总报告<span class="tag">2026-10-09</span></h1>
+  <div class="sub">验证对象：别人常说的「大盘关口支撑 / 抄跌抢反弹赚几点 / 顺趋势抄跌 / 指数趋势跟踪」到底准不准、能不能复制。<br>数据：6 大指数（上证 / 沪深300 / 上证50 / 中证500 / 创业板 / 科创50），2018-01 ~ 2026-09-30（约 8.7 年，含 19-21、24-25 两轮牛市）。</div>
+
+  <div class="card synthesis">
+    <h2>一句话裁定</h2>
+    <div class="callout">四个方向全部验证完毕：<b>指数层技术打法，无一有压倒性、可复制的 edge</b>。唯一真有用的，是高波动成长指数（创业板 / 中证500）的快 MA60 <b>降回撤保护</b>——那属于风控层，不是信号 alpha。与项目「技术信号大样本无 edge」总裁定完全贯通。</div>
+    <table class="synthesis">
+      <thead><tr><th>方向</th><th>方法</th><th>关键结果</th><th>裁定</th></tr></thead>
+      <tbody>
+        <tr><td>① 圆整数支撑</td><td>大样本 pooling：6指数×全整数关×网格</td><td>36 配置净 −13~+3bp，t 全&lt;1，强关占比 40-55%（≈抛硬币）</td><td><span class="verdict v-dead">无 edge</span></td></tr>
+        <tr><td>② 抢反弹赚几点</td><td>触支撑带→次日买→+tp/-sl 退出</td><td>小样本看着有；大样本退化成平（小样本陷阱）</td><td><span class="verdict v-weak">仅小样本假象</span></td></tr>
+        <tr><td>③ 顺趋势抄跌</td><td>干净前向收益（前日信号、次日进场）</td><td>升势抄跌全程负（H40 −259bp, t−3.9）；仅 1/27 微显著且熊市负</td><td><span class="verdict v-dead">证伪</span></td></tr>
+        <tr><td>④ 趋势跟踪</td><td>MA 择时（仅多）+ TSMOM 多空</td><td>MA 均值跑输买入持有；TSMOM(6mo-1yr) 跨6 均值 ≈0、回撤 −55%</td><td><span class="verdict v-dead">平均无 edge</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">1</span>圆整数关口支撑</h2>
+    <span class="verdict v-dead">大样本无 edge</span>
+    <p>先核验别人点名的具体关口（截至 9/30 三指数均在关口上方，call 尚未被测）：</p>
+    <table>
+      <thead><tr><th>关口</th><th>触达次数</th><th>20日均值</th><th>胜率</th><th>判定</th></tr></thead>
+      <tbody>
+        <tr><td>创业板 2900</td><td>40</td><td class="pos">+3.8%</td><td>60%</td><td>✓ 真支撑</td></tr>
+        <tr><td>上证 3741</td><td>—</td><td class="pos">+0.4%</td><td>64%</td><td>∼ 边际</td></tr>
+        <tr><td>上证 3700</td><td>—</td><td class="neg">−1.4%</td><td>30%</td><td>✗ 非支撑</td></tr>
+        <tr><td>科创50 1200</td><td>—</td><td class="neg">−4.0%</td><td>16%</td><td>✗ 破位非支撑</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">扩到 6 指数 × 全整数关 × 参数网格（pooling 后每配置 N=929~2200 笔）：所有 36 个配置净收益 −13~+3bp，t 统计量全 &lt;1；「强关」占比 40-55%，等价于抛硬币——支撑识别没有筛选力。</p>
+    <p><b>结论：</b>他「蛮准」部分属实（创业板 2900 有数据支撑）、部分错觉（3700/1200 历史是破位）。但大样本下圆整数支撑无可测 edge。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span>抢反弹「赚几点就走」</h2>
+    <span class="verdict v-weak">仅小样本假象</span>
+    <p>用户纠正尺度：别人是支撑位抢反弹、赚 2-5 点就走，非选股大 alpha。逐关口回测（tp=sl=3%）：</p>
+    <table>
+      <thead><tr><th>关卡</th><th>净收益</th><th>胜率</th><th>样本</th></tr></thead>
+      <tbody>
+        <tr><td>上证 3741</td><td class="pos">+40bp</td><td>57%</td><td>7 笔</td></tr>
+        <tr><td>上证 3700</td><td>−3bp</td><td>—</td><td>假支撑</td></tr>
+        <tr><td>创业板 2900</td><td>−3bp</td><td>50%</td><td>平</td></tr>
+        <tr><td>科创50 1200</td><td class="pos">+57bp</td><td>—</td><td>10 笔</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">网格显示：真支撑上「只赚 3 点」反而打平（50% 胜 + 1:1 止损 = 无 edge）；要赚 4-5 点才吃到反弹真实 median。但每关仅 7-22 笔——小样本噪声。大样本研究（方向①的 pooling）已推翻「温和 edge」结论。</p>
+    <p><b>结论：</b>指数级「几点就走」在真支撑上有温和真实 edge（非个股那种全负），但样本太小、依赖选对真支撑，不可作为稳定策略。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span>顺趋势抄跌（干净前向收益）</h2>
+    <span class="verdict v-dead">证伪</span>
+    <p>用干净法排除前视：价格自 20 日高回撤 ≥ depth%、rising-edge 触发 → 次日均买 → 持 H=10/20/40 日收盘退出。分 A 任意 / B 升势（收&gt;MA60）/ C 降势（收&lt;MA60）。</p>
+    <table>
+      <thead><tr><th>条件</th><th>配置</th><th>净收益</th><th>t</th><th>判定</th></tr></thead>
+      <tbody>
+        <tr><td>B 升势抄跌</td><td>H40 回撤5%</td><td class="neg">−259bp</td><td class="neg">−3.9</td><td>✗ 全程负</td></tr>
+        <tr><td>B 升势抄跌</td><td>H40 回撤8%</td><td class="neg">−236bp</td><td class="neg">−2.2</td><td>✗ 全程负</td></tr>
+        <tr><td>A 任意回撤</td><td>回撤8% H40</td><td class="pos">+49~88bp</td><td>1.4~1.6</td><td>≈抛硬币，不显著</td></tr>
+        <tr><td>C 降势回撤</td><td>8% H40</td><td class="pos">+150bp</td><td class="pos">+2.1</td><td>仅 1/27 显著，但熊市负</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">27 个配置仅 1 个 t&gt;2，且其按年 2018+47 / 2019+703 / 2020+471 / 2022−245 / 2023−233——熊市被腰斩，regime 脆弱。</p>
+    <p><b>结论：</b>直接证伪「别人蛮准 = 顺趋势抄跌」的解释。抄跌（无论是否过滤升势）在干净前向收益下无可测显著 edge。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">4</span>指数动量 / 趋势跟踪（反方向）</h2>
+    <span class="verdict v-dead">平均无 edge</span>
+    <p>与抄跌相反，学术上趋势跟踪在指数层最该有 edge。MA 择时（收&gt;MA 持仓，前日收盘判定次日均进场，已修前视）+ TSMOM 多空（sign(收_{t-1}/收_{t-1-L}−1)）。</p>
+    <table>
+      <thead><tr><th>策略（跨 6 指数均值）</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">最大回撤</th></tr></thead>
+      <tbody>
+        <tr><td>买入持有</td><td class="num pos">13.2%</td><td class="num">0.74</td><td class="num">−37.1%</td></tr>
+        <tr><td>MA120 择时</td><td class="num">5.6%</td><td class="num">0.44</td><td class="num">−30.8%</td></tr>
+        <tr><td>MA200 择时</td><td class="num">5.2%</td><td class="num">0.42</td><td class="num">−28.8%</td></tr>
+        <tr><td>TSMOM120 多空</td><td class="num neg">−1.6%</td><td class="num">−0.02</td><td class="num">−58.5%</td></tr>
+        <tr><td>TSMOM250 多空</td><td class="num">0.3%</td><td class="num">0.08</td><td class="num">−55.0%</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">⚠ 首版 MA 择时因前视虚高（MA60 上证 23.8%），已修回真实 9.2%。MA 择时平均既降年化又降 Sharpe，仅小幅降回撤 → 风险调整跑输买入持有。</p>
+    <p><b>唯二真亮点（个股级，非平均）：</b>创业板 MA60 <span class="pos">18.9% / Sharpe 0.99 / MDD −20.0%</span>（买入持有 13.1% / 0.60 / −49.9%）；中证500 MA60 <span class="pos">14.2% / Sharpe 1.04 / MDD −18.2%</span>。本质是<b>高波动成长指数的降回撤保护，不是增厚收益</b>。TSMOM 多空在 6mo-1yr 学术经典窗基本无效（与 2010s 后权益 TSMOM 衰减的学界共识一致）。</p>
+  </div>
+
+  <div class="card">
+    <h2>「别人蛮准」到底是什么意思</h2>
+    <div class="callout">
+      最省解释，四条线全部指向同一结论：<br>
+      ① <b>展示 / 幸存者偏差</b>——只晒对的、忘掉错的；<br>
+      ② <b>叙事归因</b>——把成功叫「支撑位 / 顺趋势抄跌」，但信号不是收益来源；<br>
+      ③ <b>幸运双牛窗口</b>——19-21、24-25 任何多头都赚，熊市 2022 全亏；<br>
+      ④ 「赚几点就走」是小样本回忆，大样本下退化成抛硬币。
+    </div>
+    <p>要真把「蛮准」从印象变成可证伪的数据，得建 <b>call tracker</b>：把他每次说的关口 / 抄跌判断按时间戳逐条记录（哪天说、说什么位、给多久、实际走法），跑一段后机器打分。</p>
+  </div>
+
+  <div class="card">
+    <h2>可复跑脚本（已 git commit，未 push）</h2>
+    <span class="pill">tools/index_support_check.py · 44ae26f</span>
+    <span class="pill">tools/index_bounce_strategy.py · 0c4e049</span>
+    <span class="pill">tools/index_bounce_research.py · d9f27cf</span>
+    <span class="pill">tools/index_dip_research.py · c2d2613</span>
+    <span class="pill">tools/index_momentum_research.py · f728511</span>
+    <p class="muted" style="margin-top:10px">运行环境：conda <code>quantaalpha</code>（Python3.11，含 psycopg2）。数据源 TimescaleDB <code>quant_data</code>（QMT datadir 回填，至 2026-09-30）。换指数 / 参数直接改脚本顶部常量即可复跑。</p>
+  </div>
+
+  <div class="foot">本报告由研究脚本真实输出汇总，非估算。任何方向如需 regime 切分 / 换参数复验，告诉我即可。</div>
+</div>
+</body>
+</html>
