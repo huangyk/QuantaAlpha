@@ -5,7 +5,7 @@ LLM 驱动 Alpha 因子挖掘（rdagent 0.8.0）。回测必须真实数据，�
 - qlib `cn_real_full`：2020-01~2026-08，全A~5210只，日频8字段（**无市值/PE/行业**）。基准 SH000300 已补齐。
 - TimescaleDB `quant_data`（127.0.0.1:5432/quant/quant123456，配置键 `database` 非 dbname）：`bars_1d` 1231万行/2011~2026/5364只，含 amount/turnover_rate/float_shares（比 qlib 全）；`bars_5m` 3140万行（2026起）。
 - 架构：TimescaleDB底座 → ETL → qlib(离线研究) → 策略 → QMT/Ptrade(仅实盘增量)。miniqmt 收紧不影响研究。
-- 环境：conda `quantaalpha`（含 qlib 0.9.7）；psycopg2 需 conda base。
+- 环境：**`quantaalpha`（Python3.11）是主力环境**——挖因子(rdagent 0.8.0)+回测+后端全在这，含 qlib 0.9.7 + lightgbm 4.7.0 + torch 2.5.1 + **xgboost 2.1.4** + **psycopg2 2.9.13** + scipy + numpy 1.26.4。另 `qmt312` 是 **QMT 312 客户端 API** 环境（xtdata 取数），numpy=2.4 **不可**与 quantaalpha 混用包。详见 `docs/environment_setup.md`。
 
 ## ★ 验证铁律（写代码前必查，反复踩坑）
 1. **信号-收益对齐**：T日收盘出分→收益从 T+1 起（买T+1、卖T+1+h）。`close.shift(-h)/close`=未来函数。**IC 高得离谱先查对齐，不是庆祝**；写完回测必须**手算一天**验证价格取的是哪天。
