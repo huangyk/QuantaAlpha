@@ -84,7 +84,7 @@ def weighted_log_momentum(close_series, lb):
     return score, ann, r2
 
 
-def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False):
+def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False, dd_guard=0.0):
     data = load_etf(cur, codes, start, end)
     # 统一交易日: 取并集(各 ETF 上市日不同, 早上市的晚加入轮动, 不再强制交集)
     all_days = sorted(set().union(*[set(g.index) for g in data.values()]))
@@ -109,8 +109,9 @@ def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False):
             )
     # 回测 (信号-收益对齐: T日收盘选股 -> T+1日才计入收益, 消除前视偏差)
     nav = []; nav_dates = []
-    hold = []          # 当前持仓 (昨日信号决定, 今日产生收益)
+    hold = {}          # 当前持仓权重 dict (昨日信号决定, 今日产生收益)
     cash = 1.0
+    peak = 1.0
     trades = 0
     idx_of = {d: k for k, d in enumerate(days)}
     for i, d in enumerate(days):
@@ -131,19 +132,32 @@ def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False):
         target = [c for c, _ in cands[:top_n]]
         if rebalance == "h":   # 买入持有: 绕过过滤, 首日全仓
             target = list(codes)
-        # 今日收益: 用当前 hold (昨日决定的) 的当日涨跌幅
-        # ⚠️ 并集交易日下 g.index != days, 必须用 .loc 按日期取; 用 .iloc[k] 会张冠李戴
+        # 今日收益: 用当前 hold (昨日决定的权重) 的当日涨跌幅, T+1 对齐
         if hold:
-            day_ret = 0.0; n = 0
+            day_ret = 0.0; tot_w = 0.0
             prev_d = days[i - 1] if i > 0 else None
-            for c in hold:
+            for c, w in hold.items():
+                if w <= 0:
+                    continue
                 g = data[c]
                 ct = g["close"].get(d)
                 cp = g["close"].get(prev_d) if prev_d is not None else None
                 if (ct is not None and cp is not None
                         and pd.notna(ct) and pd.notna(cp) and cp > 0):
-                    day_ret += ct / cp - 1; n += 1
-            if n: cash *= (1 + day_ret / n)
+                    day_ret += w * (ct / cp - 1); tot_w += w
+            if tot_w > 0:
+                day_ret /= tot_w          # 对当日有效持仓等权归一化(停牌日不计收益也不亏)
+            cash *= (1 + day_ret)
+        peak = max(peak, cash)
+        # 组合级分级回撤(仅当 dd_guard>0): 回撤越深 -> 明日仓位越低
+        scale_today = 1.0
+        if dd_guard > 0:
+            dd = cash / peak - 1
+            if dd <= -dd_guard: scale_today = 0.0
+            elif dd <= -0.08:  scale_today = 0.25
+            elif dd <= -0.06:  scale_today = 0.5
+            elif dd <= -0.04:  scale_today = 0.75
+            elif dd <= -0.02:  scale_today = 0.9
         # 调仓判定 (今日信号决定明日 hold)
         do_rb = False
         if rebalance == "d": do_rb = True
@@ -156,16 +170,22 @@ def run(cur, codes, start, end, lb, top_n, rebalance, switch, verbose=False):
         elif rebalance == "h": do_rb = (i == 0)
         if do_rb:
             if not hold or switch <= 0:
-                new_hold = target
+                new_hold = {c: 1.0 / len(target) for c in target} if target else {}
             else:
                 cur_scores = {c: pre[c][d]["score"] for c in hold if d in pre[c]}
                 cur_avg = np.mean(list(cur_scores.values())) if cur_scores else 0
                 best_new = cands[0][1] if cands else 0
-                new_hold = target if best_new >= cur_avg * (1 + switch) else hold
-            if new_hold != hold:
+                new_hold = ({c: 1.0 / len(target) for c in target} if target else {}) \
+                    if best_new >= cur_avg * (1 + switch) else dict(hold)
+            changed = any(abs(new_hold.get(c, 0.0) - hold.get(c, 0.0)) > 1e-9
+                          for c in set(list(hold.keys()) + list(new_hold.keys())))
+            if changed:
                 cash *= (1 - COMM_RATE * 2)   # 卖+买双边佣金(万1)
-                hold = new_hold
                 trades += 1
+            hold = new_hold
+        # 分级回撤缩放(影响明日收益权重)
+        if dd_guard > 0 and scale_today < 1.0:
+            hold = {c: w * scale_today for c, w in hold.items()}
         nav.append(cash); nav_dates.append(d)
     nav_s = pd.Series(nav, index=nav_dates)
     # 指标
@@ -227,7 +247,9 @@ def precompute_etf(cur, codes, start, end):
                 atr=float(atr.iloc[j]) if pd.notna(atr.iloc[j]) else np.nan,
                 score=score, r20=r20, r60=r60, r120=r120,
             )
-    return data, pre, all_days
+    # 对齐到并集交易日的收益面板(供组合波动真实协方差估计, 无未来函数)
+    rets_panel = pd.DataFrame({c: series[c]["ret"] for c in codes}).reindex(all_days)
+    return data, pre, all_days, rets_panel
 
 
 def _metrics(nav_s, trades=0):
@@ -240,7 +262,7 @@ def _metrics(nav_s, trades=0):
     return dict(nav=nav_s, ann=ann, vol=vol, sharpe=sharpe, maxdd=dd, trades=trades, end=nav_s.iloc[-1])
 
 
-def portfolio_backtest(data, pre, all_days, opts):
+def portfolio_backtest(data, pre, all_days, opts, rets_panel=None):
     """组合层回测。opts 控制各层开关, 全部默认关(=朴素等权轮动对比)。
 
     信号-收益对齐: T日收盘排名决定权重 -> T+1 起计收益(无前视)。
@@ -262,7 +284,7 @@ def portfolio_backtest(data, pre, all_days, opts):
     prev_w = {}                               # 昨日权重(用于今日收益)
     trades_cost = 0.0
     peak = 1.0
-    guarded = False
+    scale_today = 1.0
 
     for i, d in enumerate(days):
         # 1) 今日收益(用昨日权重, T+1 对齐)
@@ -285,20 +307,18 @@ def portfolio_backtest(data, pre, all_days, opts):
                     day_ret += w * (ct / cp - 1)
             cash *= (1 + day_ret)
         peak = max(peak, cash)
-        # ⑦ 组合级回撤降级: NAV 自高点回落超 dd_guard -> 全仓转现金/511880, 回升后恢复
+        # ⑦ 分级回撤控制(连续降仓, 替代 binary 全砍): NAV 自高点回落越深 -> 仓位越低
+        #    真实、无未来函数; 与 guoyaohua 的"回撤降级"同思路, 但用阶梯而非全砍
         gp = opts.get("dd_guard", 0.0)
+        scale_today = 1.0
         if gp > 0:
-            if not guarded and (cash / peak - 1) < -gp:
-                guarded = True
-                turn = sum(prev_w.values())
-                for s in range(4):
-                    sleeve_w[s] = {}
-                pos_state.clear()
-                cash *= (1 - turn * COMM_RATE); trades_cost += turn
-                prev_w = {}
-            elif guarded and (cash / peak - 1) > -opts.get("dd_recover", 0.02):
-                guarded = False
-                last_week = -1          # 恢复后强制下次刷新
+            dd = cash / peak - 1
+            if dd <= -gp:       scale_today = 0.0
+            elif dd <= -0.08:   scale_today = 0.25
+            elif dd <= -0.06:   scale_today = 0.5
+            elif dd <= -0.04:   scale_today = 0.75
+            elif dd <= -0.02:   scale_today = 0.9
+            else:               scale_today = 1.0
 
         # 2) ATR 止损(每日检查, 穿透即退出该 slice)
         if opts.get("atr"):
@@ -320,7 +340,7 @@ def portfolio_backtest(data, pre, all_days, opts):
 
         # 3) 四周错峰 sleeve 刷新(每 ~5 交易日刷新一个 sleeve; 回撤降级期间跳过)
         week = i // 5
-        if not guarded and week != last_week:
+        if week != last_week:
             last_week = week
             s = week % 4
             cands = []
@@ -361,26 +381,41 @@ def portfolio_backtest(data, pre, all_days, opts):
                     raw = {c: sleeve_budget / len(picks) for c in picks}
                 for c in raw:
                     raw[c] = min(raw[c], 0.40)        # 单资产≤40%
-                # 波动率上限(向下缩放, 不杠杆)
+                # 波动率上限(向下缩放, 不杠杆)。组合波动用真实滚动协方差估计
                 if opts.get("vol_cap"):
                     w_all = {}
                     for ss in range(4):
                         src = raw if ss == s else sleeve_w[ss]
                         for c, w in src.items():
                             w_all[c] = w_all.get(c, 0) + w
-                    sig = {}
-                    for c in w_all:
-                        pd_ = pre[c].get(d)
-                        if pd_ is not None and pd.notna(pd_["sigma40"]):
-                            sig[c] = pd_["sigma40"]
-                    var = 0.0
-                    keys = list(sig.keys())
-                    for a in keys:
-                        for b in keys:
-                            rho_ab = 1.0 if a == b else rho
-                            var += w_all[a] * w_all[b] * sig[a] * sig[b] * rho_ab
-                    est = np.sqrt(max(var, 0))
-                    if est > 0.10:
+                    keys = list(w_all.keys())
+                    use_real = opts.get("real_cov", True) and rets_panel is not None
+                    if use_real and len(keys) >= 2:
+                        lo = max(0, i - 60)
+                        win = rets_panel.loc[days[lo:i + 1], keys].dropna(axis=0, how="any")
+                        if len(win) >= 20:
+                            cov = win.cov().fillna(0).to_numpy() * 250.0   # 年化协方差
+                            wvec = np.array([w_all[k] for k in keys])
+                            var = float(wvec @ cov @ wvec)
+                            est = np.sqrt(max(var, 0))
+                        else:
+                            est = np.nan
+                    else:
+                        sig = {}
+                        for c in keys:
+                            pd_ = pre[c].get(d)
+                            if pd_ is not None and pd.notna(pd_.get("sigma40")):
+                                sig[c] = pd_["sigma40"]
+                        est = np.nan
+                        if sig:
+                            var = 0.0
+                            sk = list(sig.keys())
+                            for a in sk:
+                                for b in sk:
+                                    rho_ab = 1.0 if a == b else rho
+                                    var += w_all[a] * w_all[b] * sig[a] * sig[b] * rho_ab
+                            est = np.sqrt(max(var, 0))
+                    if pd.notna(est) and est > 0.10:
                         scale = 0.10 / est
                         for c in raw:
                             raw[c] *= scale
@@ -403,12 +438,14 @@ def portfolio_backtest(data, pre, all_days, opts):
                 cash *= (1 - turnover * COMM_RATE)
                 trades_cost += turnover
 
-        # 4) 合并权重(供明日收益使用)
+        # 4) 合并权重(供明日收益使用); 分级回撤下整体按 scale_today 缩放
         w = {}
         for s in range(4):
             for c, x in sleeve_w[s].items():
                 if x > 0:
                     w[c] = w.get(c, 0) + x
+        if gp > 0 and scale_today < 1.0:
+            w = {c: v * scale_today for c, v in w.items()}
         prev_w = w
         nav.append(cash); nav_dates.append(d)
 
@@ -465,25 +502,30 @@ def main():
     # ---------- 组合层模式 ----------
     if args.portfolio or any([args.inv_vol, args.vol_cap, args.sleeve, args.atr, args.dedup, args.cash_etf]):
         codes = args.pool
-        data, pre, all_days = precompute_etf(cur, codes, args.start, args.end)
+        data, pre, all_days, rets_panel = precompute_etf(cur, codes, args.start, args.end)
         base = dict(codes=codes, top_n=args.top_n_port, atr_mult=args.atr_mult)
         print(f"\n=== ETF 组合层对比 (池{len(codes)}只, {args.start}~{args.end}, 佣金万{args.commission*1e4:.0f}, top_n={args.top_n_port}) ===")
         print(f"{'组合配置':<22}{'年化':>8}{'波动':>8}{'夏普':>7}{'回撤':>9}{'换手(单边)':>10}")
         # 真·等权持有基准(34只全仓, 与 qixing_etf_verdict.md 同口径)
         rb, _ = run(cur, codes, args.start, args.end, 25, 1, "h", 0)
         print(f"{'真·等权持有(34)':<20}{rb['ann']*100:>7.1f}%{rb['vol']*100:>7.1f}%{rb['sharpe']:>7.2f}{rb['maxdd']*100:>8.1f}%{rb['trades']:>10}")
+        # 等权持有 + 组合级分级回撤(直接压尾部风险, 保留分散 alpha)
+        rb2, _ = run(cur, codes, args.start, args.end, 25, 1, "h", 0, dd_guard=0.06)
+        print(f"{'等权+分级回撤(6%)':<18}{rb2['ann']*100:>7.1f}%{rb2['vol']*100:>7.1f}%{rb2['sharpe']:>7.2f}{rb2['maxdd']*100:>8.1f}%{rb2['trades']:>10}")
         configs = [
             ("朴素 top-8 等权轮动", dict(base, inv_vol=False, vol_cap=False, sleeve=False, atr=False, dedup=False, cash_etf=False)),
             ("+逆波动率权重", dict(base, inv_vol=True, vol_cap=False, sleeve=False, atr=False, dedup=False, cash_etf=False)),
-            ("+波动率上限", dict(base, inv_vol=True, vol_cap=True, sleeve=False, atr=False, dedup=False, cash_etf=False)),
+            ("+波动率上限(rho=0.3)", dict(base, inv_vol=True, vol_cap=True, real_cov=False, sleeve=False, atr=False, dedup=False, cash_etf=False)),
+            ("+波动率上限(真实协方差)", dict(base, inv_vol=True, vol_cap=True, real_cov=True, sleeve=False, atr=False, dedup=False, cash_etf=False)),
             ("+四周错峰", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=False, dedup=False, cash_etf=False)),
             ("+ATR止损", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=True, dedup=False, cash_etf=False)),
             ("+相关性去重", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=True, dedup=True, cash_etf=False)),
             ("全开(+511880缓冲)", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=True, dedup=True, cash_etf=True)),
-            ("全开+回撤降级(8%)", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=True, dedup=True, cash_etf=True, dd_guard=0.08, dd_recover=0.02)),
+            ("全开+分级回撤(6%)", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=True, dedup=True, cash_etf=True, dd_guard=0.06)),
+            ("全开+分级回撤(8%)", dict(base, inv_vol=True, vol_cap=True, sleeve=True, atr=True, dedup=True, cash_etf=True, dd_guard=0.08)),
         ]
         for name, opt in configs:
-            res, _ = portfolio_backtest(data, pre, all_days, opt)
+            res, _ = portfolio_backtest(data, pre, all_days, opt, rets_panel)
             print(f"{name:<20}{res['ann']*100:>7.1f}%{res['vol']*100:>7.1f}%{res['sharpe']:>7.2f}{res['maxdd']*100:>8.1f}%{res['trades']:>10.1f}")
         cur.close(); c.close()
         return
