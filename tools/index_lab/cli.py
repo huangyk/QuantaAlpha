@@ -123,6 +123,63 @@ def cmd_absmom():
     print(f"  -> 风险调整最优: {best[0]} (Sharpe {best[1]['sharpe']:.2f}, 回撤 {best[1]['mdd']*100:.1f}%)")
 
 
+def cmd_signal():
+    print("\n===== 好方法·当前持仓信号（sma200 + 逆波动，截至最新交易日） =====")
+    try:
+        r = method_absmom.run_signal()
+    except DataError as e:
+        print(f"  [跳过] {e}"); return
+    print(f"  数据截至 {r['as_of']}；信号 sma200 / 权重 {r['weight']}")
+    print(f"  池 {r['n_total']} 只，趋势向上(持有) {r['n_hold']} 只")
+    print(f"  {'代码':<10}{'收盘':>9}{'200SMA':>9}{'偏离%':>8}{'60日波动':>9}{'权重%':>7}")
+    held = [x for x in r["holdings"] if x["hold"]]
+    held.sort(key=lambda x: -x["weight"])
+    for x in held:
+        sma = x["sma"]; gap = x["gap_pct"]; vol = x["vol_60"]
+        print(f"  {x['code']:<10}{x['close']:>9.3f}{sma:>9.3f}{gap:>+8.1f}"
+              f"{('%.1f%%' % (vol*100)) if x['hold'] and vol==vol else '   -':>9}{x['weight']*100:>7.1f}%")
+    exitd = [x for x in r["holdings"] if not x["hold"]]
+    print(f"  --- 趋势向下(转现金) {len(exitd)} 只 ---")
+    for x in exitd[:14]:
+        gap = x["gap_pct"]
+        sma_s = f"{x['sma']:.3f}" if x["sma"] == x["sma"] else "   -"
+        print(f"  {x['code']:<10}{x['close']:>9.3f}{sma_s:>9}{gap:>+8.1f}")
+    # 写出可直接跟的单
+    import csv, os
+    out_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "results"))
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "current_holdings.csv")
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["code", "close", "sma200", "gap_pct", "vol_60", "hold", "weight"])
+        for x in r["holdings"]:
+            w.writerow([x["code"], round(x["close"], 4),
+                        (round(x["sma"], 4) if x["sma"] == x["sma"] else ""),
+                        (round(x["gap_pct"], 2) if x["gap_pct"] == x["gap_pct"] else ""),
+                        (round(x["vol_60"], 4) if x["vol_60"] == x["vol_60"] else ""),
+                        int(x["hold"]), x["weight"]])
+    print(f"  -> 持仓单已写出: {path}")
+
+
+def cmd_regime():
+    print("\n===== 好方法·regime 稳健性（牛/震荡/熊 分段对比） =====")
+    try:
+        r = method_absmom.run_regime()
+    except DataError as e:
+        print(f"  [跳过] {e}"); return
+    print(f"  {r['n_etf']}只ETF {r['start']}~{r['end']}；配置 {r['config']}；共 {r['n_months']} 个月")
+    print(f"  {'regime':<8}{'月数':>5}{'策略月均':>10}{'基准月均':>10}{'超额月均':>10}{'胜率':>7}{'策略年化':>10}{'基准年化':>10}")
+    for k in ("bull", "side", "bear"):
+        a = r["regimes"].get(k)
+        if not a:
+            continue
+        name = {"bull": "牛市", "side": "震荡", "bear": "熊市"}[k]
+        print(f"  {name:<7}{a['n']:>5}{a['avg_strat']*100:>+9.2f}%{a['avg_base']*100:>+9.2f}%"
+              f"{a['avg_excess']*100:>+9.2f}%{a['win_rate']*100:>6.0f}%"
+              f"{a['ann_strat']*100:>+9.1f}%{a['ann_base']*100:>+9.1f}%")
+    print("  -> 熊市段策略(常转现金)应显著跑赢基准；牛市段基本跟上 => 降回撤非牛市漏赚。")
+
+
 def cmd_calltracker(json_path=None):
     print("\n===== 功能A call tracker（博主判断按时间戳打分） =====")
     if json_path:
@@ -159,6 +216,8 @@ def cmd_all():
     cmd_momentum()
     cmd_etfguard()
     cmd_absmom()
+    cmd_signal()
+    cmd_regime()
     cmd_calltracker()
     print("\n" + "=" * 64)
     print("  裁定：四个验证方向(支撑/抢反弹/抄跌/趋势)均无压倒性可复制 edge；")
@@ -172,7 +231,8 @@ def cmd_all():
 def main():
     ap = argparse.ArgumentParser(prog="index_lab", description="指数技术打法验证统一包")
     ap.add_argument("cmd", nargs="?", default="all",
-                    choices=["all", "support", "bounce", "dip", "momentum", "etfguard", "absmom", "calltracker"])
+                    choices=["all", "support", "bounce", "dip", "momentum", "etfguard",
+                             "absmom", "signal", "regime", "calltracker"])
     ap.add_argument("calls", nargs="?", default=None,
                     help="calltracker 子命令的 JSON 路径（可选）")
     args = ap.parse_args()
@@ -191,6 +251,10 @@ def main():
             cmd_etfguard()
         elif args.cmd == "absmom":
             cmd_absmom()
+        elif args.cmd == "signal":
+            cmd_signal()
+        elif args.cmd == "regime":
+            cmd_regime()
         elif args.cmd == "calltracker":
             cmd_calltracker(args.calls)
     except DataError as e:

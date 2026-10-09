@@ -119,6 +119,8 @@ release-notes.md
 *_analysis*.csv
 *_analysis*.json
 *qlib_res.csv
+# 生成的当前持仓单(index_lab signal 命令产出)
+data/results/current_holdings.*
 # Local notes file (optional filename)
 
 # ---- Translations ----

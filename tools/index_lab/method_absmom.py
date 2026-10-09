@@ -141,3 +141,129 @@ def run(start="2019-01-01", end="2026-09-30", clean_only=True, signals=("absmom"
             out["configs"][key] = dict(ann=r["ann"], sharpe=r["sharpe"], mdd=r["mdd"],
                                         time_in_market=r["time_in_market"], n_rebal=r["n_rebal"])
     return out
+
+
+def current_signal(codes, as_of=None, signal="sma200", sma_w=200,
+                   weight="inv_vol", lookback=252, skip=21):
+    """截至 as_of(默认最新交易日) 各ETF趋势状态与建议持仓权重。
+
+    返回 dict(as_of, signal, weight, n_hold, n_total, holdings)。
+    holdings 每项: code, close, sma(仅sma200), mom(仅absmom),
+                   gap_pct(偏离%), vol_60(60日年化波动), hold, weight。
+    hold=True 表示趋势向上、应持有；权重按 equal 或 inv_vol 在"持有子集"内归一。
+    """
+    con = psycopg2.connect(**DB); cur = con.cursor()
+    try:
+        if as_of is None:
+            cur.execute("SELECT MAX(trade_date) FROM bars_1d WHERE asset_type='etf'")
+            as_of = cur.fetchone()[0]
+        win = (lookback + skip + 10) if signal == "absmom" else (sma_w + 10)
+        start = (pd.Timestamp(as_of) - pd.Timedelta(days=int(win * 1.5))).strftime("%Y-%m-%d")
+        data = _load_etf(cur, codes, start, as_of)
+    finally:
+        con.close()
+
+    rows = []
+    for code, g in data.items():
+        c = g["close"].astype(float).dropna()
+        rec = dict(code=code, close=float(c.iloc[-1]) if len(c) else float("nan"),
+                   hold=False, weight=0.0, gap_pct=float("nan"),
+                   sma=float("nan"), mom=float("nan"),
+                   vol_60=float("nan"), n=len(c))
+        if signal == "absmom":
+            need = lookback + skip + 1
+            if len(c) >= need:
+                mom = c.iloc[-1 - skip] / c.iloc[-1 - skip - lookback] - 1
+                rec["mom"] = float(mom); rec["gap_pct"] = float(mom * 100)
+                rec["hold"] = bool(mom > 0)
+        else:
+            if len(c) >= sma_w:
+                sma = float(c.rolling(sma_w).mean().iloc[-1])
+                rec["sma"] = sma
+                rec["gap_pct"] = float((c.iloc[-1] / sma - 1) * 100)
+                rec["hold"] = bool(c.iloc[-1] > sma)
+        if len(c) > 61:
+            v = c.pct_change().iloc[-60:].std() * np.sqrt(252)
+            rec["vol_60"] = float(v) if np.isfinite(v) else float("nan")
+        rows.append(rec)
+
+    held = [r for r in rows if r["hold"]]
+    if weight == "inv_vol" and held:
+        for r in held:
+            r["_w"] = (1.0 / max(r["vol_60"], 0.05)) if np.isfinite(r["vol_60"]) else 0.0
+        tot = sum(r["_w"] for r in held)
+        for r in held:
+            r["weight"] = round(r["_w"] / tot, 4) if tot > 0 else 0.0
+    elif held:
+        for r in held:
+            r["weight"] = round(1.0 / len(held), 4)
+    for r in rows:
+        r.pop("_w", None)
+    return dict(as_of=str(as_of), signal=signal, weight=weight,
+                n_hold=len(held), n_total=len(rows), holdings=rows)
+
+
+def run_signal(as_of=None, signal="sma200", weight="inv_vol", clean_only=True):
+    """算出当前(最新交易日)持仓信号；返回 current_signal 的 dict（含 start）。"""
+    from .io_db import load_etf_universe
+    if as_of is None:
+        con = psycopg2.connect(**DB); cur = con.cursor()
+        cur.execute("SELECT MAX(trade_date) FROM bars_1d WHERE asset_type='etf'")
+        as_of = cur.fetchone()[0]; con.close()
+    start = (pd.Timestamp(as_of) - pd.Timedelta(days=800)).strftime("%Y-%m-%d")
+    codes = load_etf_universe(start, as_of, clean_only)
+    if not codes:
+        raise DataError("ETF 池为空")
+    sig = current_signal(codes, as_of, signal=signal, weight=weight)
+    sig["start"] = start
+    return sig
+
+
+def regime_split(codes, start="2019-01-01", end="2026-09-30", signal="sma200",
+                 weight="inv_vol", sma_w=200, lookback=252, skip=21):
+    """按基准(等权ETF)滚动12月动量划分 牛/震荡/熊，对比策略与基准在各 regime 的月度表现。
+
+    目的：证明好方法在熊市段真减仓(常转现金)、不是单纯牛市漏赚。
+    regime: 基准12月动量 > +10% 牛市 / < -10% 熊市 / 其余震荡。
+    """
+    strat = abs_momentum_etf(codes, start, end, signal=signal, weight=weight,
+                             sma_w=sma_w, lookback=lookback, skip=skip)
+    base = etf_equal_weight(codes, start, end, gate_code=None)
+    sr = strat["nav"].resample("ME").last().pct_change().dropna()
+    br = base["nav"].resample("ME").last().pct_change().dropna()
+    bm = (1 + br).cumprod()
+    mom12 = bm / bm.shift(12) - 1
+    months = sorted(set(sr.index) & set(br.index) & set(mom12.index))
+    recs = []
+    for m in months:
+        if pd.isna(mom12[m]):
+            continue
+        regime = "bull" if mom12[m] > 0.10 else ("bear" if mom12[m] < -0.10 else "side")
+        recs.append(dict(month=m, regime=regime, s=sr[m], b=br[m], excess=sr[m] - br[m]))
+    from collections import defaultdict
+    agg = defaultdict(lambda: dict(n=0, s=0.0, b=0.0, ex=0.0, win=0))
+    for r in recs:
+        a = agg[r["regime"]]
+        a["n"] += 1; a["s"] += r["s"]; a["b"] += r["b"]; a["ex"] += r["excess"]
+        a["win"] += 1 if r["excess"] > 0 else 0
+    out = dict(n_months=len(recs), config=f"{signal}/{weight}", regimes={})
+    for k, a in agg.items():
+        n = a["n"]
+        out["regimes"][k] = dict(n=n,
+                                 avg_strat=a["s"] / n, avg_base=a["b"] / n,
+                                 avg_excess=a["ex"] / n, win_rate=a["win"] / n,
+                                 ann_strat=(1 + a["s"] / n) ** 12 - 1,
+                                 ann_base=(1 + a["b"] / n) ** 12 - 1)
+    return out
+
+
+def run_regime(signal="sma200", weight="inv_vol", clean_only=True,
+               start="2019-01-01", end="2026-09-30"):
+    """跑 regime 切分；返回 regime_split 的 dict（含 n_etf/start/end）。"""
+    from .io_db import load_etf_universe
+    codes = load_etf_universe(start, end, clean_only)
+    if not codes:
+        raise DataError("ETF 池为空")
+    out = regime_split(codes, start=start, end=end, signal=signal, weight=weight)
+    out["n_etf"] = len(codes); out["start"] = start; out["end"] = end
+    return out

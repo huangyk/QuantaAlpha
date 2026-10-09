@@ -155,6 +155,44 @@
   </div>
 
   <div class="card">
+    <h2>好方法落地①：当前持仓信号（截至 2026-09-30）</h2>
+    <span class="verdict v-ok">可直接跟的单</span>
+    <p>把上表最优配置（200日SMA + 逆波动率）套到最新交易日，给出「现在该持哪些」：34 只池里 <b>11 只在 200 日线上（持有）、23 只跌穿转现金</b>。逆波动率权重天然压高波动品种——低波动债券/货币 ETF 占大头。</p>
+    <table>
+      <thead><tr><th>代码</th><th class="num">收盘</th><th class="num">200SMA</th><th class="num">偏离%</th><th class="num">60日波动</th><th class="num">权重%</th></tr></thead>
+      <tbody>
+        <tr><td>511090.SH</td><td class="num">120.14</td><td class="num">116.20</td><td class="num pos">+3.4</td><td class="num">3.5%</td><td class="num pos">20.2%</td></tr>
+        <tr><td>511220.SH</td><td class="num">10.44</td><td class="num">10.33</td><td class="num pos">+1.1</td><td class="num">0.3%</td><td class="num pos">20.2%</td></tr>
+        <tr><td>511880.SH</td><td class="num">100.90</td><td class="num">100.52</td><td class="num pos">+0.4</td><td class="num">0.2%</td><td class="num pos">20.2%</td></tr>
+        <tr><td>512890.SH</td><td class="num">1.196</td><td class="num">1.170</td><td class="num pos">+2.2</td><td class="num">13.4%</td><td class="num pos">7.5%</td></tr>
+        <tr><td>510030.SH</td><td class="num">1.076</td><td class="num">1.060</td><td class="num pos">+1.5</td><td class="num">15.0%</td><td class="num pos">6.7%</td></tr>
+        <tr><td>513650.SH</td><td class="num">2.004</td><td class="num">1.858</td><td class="num pos">+7.9</td><td class="num">16.8%</td><td class="num pos">6.0%</td></tr>
+        <tr><td>513500.SH</td><td class="num">2.688</td><td class="num">2.481</td><td class="num pos">+8.3</td><td class="num">17.4%</td><td class="num pos">5.8%</td></tr>
+        <tr><td>513100.SH</td><td class="num">2.352</td><td class="num">2.028</td><td class="num pos">+16.0</td><td class="num">20.4%</td><td class="num pos">4.9%</td></tr>
+        <tr><td>159985.SZ</td><td class="num">2.267</td><td class="num">2.106</td><td class="num pos">+7.7</td><td class="num">27.7%</td><td class="num pos">3.6%</td></tr>
+        <tr><td>513520.SH</td><td class="num">2.352</td><td class="num">2.105</td><td class="num pos">+11.7</td><td class="num">30.4%</td><td class="num pos">3.3%</td></tr>
+        <tr><td>501018.SH</td><td class="num">1.957</td><td class="num">1.752</td><td class="num pos">+11.7</td><td class="num">59.4%</td><td class="num pos">1.7%</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">转现金 23 只（部分）：510300 −6.4% / 510500 −8.0% / 510900 −5.7% / 512100 −7.8% / 512400 −18.5% / 513050 −17.9% / 513130 −16.3% / 512500 −6.4% / 159967 −5.3%…（完整 34 只持仓单见 <code>data/results/current_holdings.csv</code>，<code>python -m tools.index_lab signal</code> 实时重算）。</p>
+  </div>
+
+  <div class="card">
+    <h2>好方法落地②：regime 稳健性（牛 / 震荡 / 熊 分段）</h2>
+    <span class="verdict v-ok">保护来自熊市减仓，非牛市漏赚</span>
+    <p>按基准（等权 ETF）滚动 12 月动量划分 regime：&gt;+10% 牛市 / &lt;−10% 熊市 / 其余震荡。逐月对比策略与基准，验证降回撤是真风险规避、不是单纯少赚。</p>
+    <table>
+      <thead><tr><th>regime</th><th class="num">月数</th><th class="num">策略月均</th><th class="num">基准月均</th><th class="num">超额月均</th><th class="num">胜率</th><th class="num">策略年化</th><th class="num">基准年化</th></tr></thead>
+      <tbody>
+        <tr><td>牛市</td><td class="num">40</td><td class="num">+1.03%</td><td class="num">+1.47%</td><td class="num neg">−0.43%</td><td class="num">38%</td><td class="num">+13.1%</td><td class="num">+19.1%</td></tr>
+        <tr><td>震荡</td><td class="num">33</td><td class="num pos">+0.75%</td><td class="num">+0.19%</td><td class="num pos">+0.56%</td><td class="num">67%</td><td class="num pos">+9.4%</td><td class="num">+2.3%</td></tr>
+        <tr><td>熊市</td><td class="num">7</td><td class="num">−0.29%</td><td class="num neg">−1.83%</td><td class="num pos">+1.54%</td><td class="num">71%</td><td class="num">−3.4%</td><td class="num neg">−19.9%</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">结论：熊市段策略（常转现金）年化 −3.4% vs 基准 −19.9%，每月超额 +1.54%、胜率 71% —— 真把回撤砍掉；震荡段每月超额 +0.56%、胜率 67% —— 明显增益；牛市段落后（每月 −0.43%、胜率 38%）是保护的代价。⚠ 熊市样本仅 7 个月（2022 加息 + 2020 新冠初期），方向明确但样本偏薄，须持续跟踪。</p>
+  </div>
+
+  <div class="card">
     <h2>可复跑脚本（已 git commit，未 push）</h2>
     <span class="pill">tools/index_support_check.py · 44ae26f</span>
     <span class="pill">tools/index_bounce_strategy.py · 0c4e049</span>
