@@ -23,6 +23,7 @@ LLM 驱动 Alpha 因子挖掘（rdagent 0.8.0）。回测必须真实数据，�
 飞龙 / 战法2 / 5min低波动族 / 短期反转+量能退潮 / 换手率 / 8种权重 / 阈值再平衡 / 6种分池——无一通过。
 共性：**正 IC ≠ 可提取 alpha**（分组不单调 + 换手成本吃掉）。因子天花板：毛 alpha ~9%/年 < 换手成本。
 IC 与「小盘程度」单调正相关 → 那是**风格/流动性因子**不是个股 alpha（加流动性约束就消失）。
+⚠️ **勘误（2026-10-09）**：以上针对 rdagent 挖的短期反转/量能类因子。**经典低波动异象是例外**——市值中性化后 IC 仍 +0.0332/t=6.17（全A 1084万行，见 tools/factor_neutral_test.py），是真 alpha 信号；但单多低波动股亏钱，须多空配对，A股做空受限致实盘难变现。详见 `docs/factor_scorecard.md` 第 8 节。
 **19强因子实为窄样本产物**：记忆中"19个强因子"来自 5min CoSTEER 在窄样本 `|t|≥2 且三段同号` 门槛；放到全A面板 `data/results/eval_1d.csv` 复现时 **0/19 正 RankIC、0/19 正夏普**（全为负）。判定因子好不好用一律以全A面板为准，不认窄样本 IC。详见 `docs/factor_scorecard.md`。
 
 **★ 低吸（战法2）专项终审 2026-10-09（见 docs/dixi_final_verdict.md，脚本 tools/dixi_deep_analysis.py）**
