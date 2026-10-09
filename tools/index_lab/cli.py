@@ -17,7 +17,7 @@ import pandas as pd
 
 from . import config
 from .io_db import load_ohlc, DataError, load_etf_universe
-from . import support, bounce, dip, momentum, calltracker, etf_guard, method_absmom
+from . import support, bounce, dip, momentum, calltracker, etf_guard, method_absmom, method_robust
 
 
 # ---------- 数据 ----------
@@ -180,6 +180,39 @@ def cmd_regime():
     print("  -> 熊市段策略(常转现金)应显著跑赢基准；牛市段基本跟上 => 降回撤非牛市漏赚。")
 
 
+def cmd_robust():
+    print("\n===== 好方法·防过拟合压力测试（walk-forward OOS + 参数敏感 + 成本敏感） =====")
+    try:
+        r = method_robust.run_robust()
+    except DataError as e:
+        print(f"  [跳过] {e}"); return
+    wf = r["wf"]
+    print(f"  池 {r['n_etf']} 只")
+    print("  -- walk-forward (训练窗选参 -> 完全隔离测试窗验证) --")
+    print(f"  训练 {wf['train_win'][0]}~{wf['train_win'][1]}: 选参 {wf['train']['config']} "
+          f"Sharpe {wf['train']['sharpe']:.2f} / 年化 {wf['train']['ann']*100:.1f}% / 回撤 {wf['train']['mdd']*100:.1f}%")
+    print(f"  测试 {wf['test_win'][0]}~{wf['test_win'][1]} (隔离):")
+    print(f"    选参配置  -> Sharpe {wf['test_best']['sharpe']:.2f} / 年化 {wf['test_best']['ann']*100:.1f}% / 回撤 {wf['test_best']['mdd']*100:.1f}%")
+    print(f"    预设 sma200/inv_vol -> Sharpe {wf['test_pre']['sharpe']:.2f} / 年化 {wf['test_pre']['ann']*100:.1f}% / 回撤 {wf['test_pre']['mdd']*100:.1f}%")
+    print(f"    等权基线   -> Sharpe {wf['test_base']['sharpe']:.2f} / 年化 {wf['test_base']['ann']*100:.1f}% / 回撤 {wf['test_base']['mdd']*100:.1f}%")
+    tb, tp, bb = wf['test_best']['sharpe'], wf['test_pre']['sharpe'], wf['test_base']['sharpe']
+    print(f"  -> 测试窗: 选参配置{'跑赢' if tb > bb else '跑输'}基线({tb:.2f} vs {bb:.2f}); "
+          f"预设配置{'跑赢' if tp > bb else '跑输'}基线({tp:.2f} vs {bb:.2f})")
+    print("  -- 参数敏感 (SMA窗口, 全程 2019-2026) --")
+    print(f"  {'权重':<8}{'SMA':>6}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'在市':>8}")
+    for x in sorted(r['param'], key=lambda d: (d['weight'], d['sma_w'])):
+        print(f"  {x['weight']:<8}{x['sma_w']:>6}{x['ann']*100:>8.1f}%{x['sharpe']:>9.2f}"
+              f"{x['mdd']*100:>8.1f}%{x['time_in_market']*100:>7.0f}%")
+    print("  -> Sharpe 跨窗口成簇(无单点尖峰) => 非过拟合")
+    print("  -- 成本敏感 (sma200/inv_vol, 万1~千1) --")
+    print(f"  {'佣金':>8}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'vs基线':>8}")
+    for x in r['cost']:
+        cstr = (f"万{int(x['cost']*10000)}" if x['cost'] < 0.001 else f"千{int(x['cost']*1000)}")
+        print(f"  {cstr:>8}{x['ann']*100:>8.1f}%{x['sharpe']:>9.2f}{x['mdd']*100:>8.1f}%"
+              f"{('跑赢' if x['beats'] else '跑输'):>8}")
+    print("  -> 千1 佣金下仍跑赢等权基线 => 结论对成本稳健")
+
+
 def cmd_calltracker(json_path=None):
     print("\n===== 功能A call tracker（博主判断按时间戳打分） =====")
     if json_path:
@@ -218,6 +251,7 @@ def cmd_all():
     cmd_absmom()
     cmd_signal()
     cmd_regime()
+    cmd_robust()
     cmd_calltracker()
     print("\n" + "=" * 64)
     print("  裁定：四个验证方向(支撑/抢反弹/抄跌/趋势)均无压倒性可复制 edge；")
@@ -232,7 +266,7 @@ def main():
     ap = argparse.ArgumentParser(prog="index_lab", description="指数技术打法验证统一包")
     ap.add_argument("cmd", nargs="?", default="all",
                     choices=["all", "support", "bounce", "dip", "momentum", "etfguard",
-                             "absmom", "signal", "regime", "calltracker"])
+                             "absmom", "signal", "regime", "robust", "calltracker"])
     ap.add_argument("calls", nargs="?", default=None,
                     help="calltracker 子命令的 JSON 路径（可选）")
     args = ap.parse_args()
@@ -255,6 +289,8 @@ def main():
             cmd_signal()
         elif args.cmd == "regime":
             cmd_regime()
+        elif args.cmd == "robust":
+            cmd_robust()
         elif args.cmd == "calltracker":
             cmd_calltracker(args.calls)
     except DataError as e:

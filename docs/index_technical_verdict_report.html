@@ -193,6 +193,47 @@
   </div>
 
   <div class="card">
+    <h2>好方法压力测试：防过拟合（walk-forward OOS + 参数敏感 + 成本敏感）</h2>
+    <span class="verdict v-ok">三重测试通过，非过拟合</span>
+    <p>项目铁律「判定因子好不好用一律以全A面板为准，不认窄样本IC；LB扫描呈噪声带即过拟合」。唯一验证有效的方法必须经得起三重拷问，否则又是一个被毙的窄样本产物。</p>
+    <p><b>① walk-forward（训练窗选参 → 完全隔离测试窗验证）</b></p>
+    <table>
+      <thead><tr><th>窗口</th><th>配置</th><th class="num">Sharpe</th><th class="num">年化</th><th class="num">回撤</th></tr></thead>
+      <tbody>
+        <tr><td>训练 2019-2022</td><td>选参 sma150/inv_vol</td><td class="num">1.02</td><td class="num">10.1%</td><td class="num">−16.5%</td></tr>
+        <tr><td>测试 2023-2026（隔离）</td><td>训练选参配置</td><td class="num pos">1.06</td><td class="num">9.6%</td><td class="num">−9.1%</td></tr>
+        <tr><td>测试 2023-2026（隔离）</td><td>预设 sma200/inv_vol（未用任何数据选）</td><td class="num pos">1.07</td><td class="num">10.0%</td><td class="num">−9.9%</td></tr>
+        <tr><td>测试 2023-2026（隔离）</td><td>等权基线</td><td class="num">0.78</td><td class="num">11.1%</td><td class="num">−14.8%</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">测试窗内「训练选参」与「预设配置」<b>双双跑赢隔离基线</b>（1.06 / 1.07 vs 0.78）——一个没看过测试数据的配置照样赢，说明不是偷看未来。⚠ 测试窗 2023-2026 是强牛，基线年化更高（11.1%）但 Sharpe 更低（0.78）、回撤更深（−14.8%）：方法的优势在风险调整与低回撤，非绝对收益，与 regime 结论一致。</p>
+    <p><b>② 参数敏感（SMA窗口 60~250，全程 2019-2026）</b></p>
+    <table>
+      <thead><tr><th>SMA窗口</th><th class="num">equal Sharpe</th><th class="num">inv_vol Sharpe</th><th class="num">inv_vol 回撤</th></tr></thead>
+      <tbody>
+        <tr><td>60</td><td class="num">0.76</td><td class="num pos">0.88</td><td class="num">−10.1%</td></tr>
+        <tr><td>100</td><td class="num">0.94</td><td class="num pos">1.09</td><td class="num">−9.7%</td></tr>
+        <tr><td>150</td><td class="num">0.92</td><td class="num pos">1.09</td><td class="num">−9.7%</td></tr>
+        <tr><td>200</td><td class="num">0.88</td><td class="num pos">1.08</td><td class="num">−7.8%</td></tr>
+        <tr><td>250</td><td class="num">0.88</td><td class="num pos">1.06</td><td class="num">−8.0%</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">inv_vol 的 Sharpe 在 1.06~1.09 之间成簇、无单点尖峰 → 非过拟合（等于「LB扫描噪声带」的反面）。等权在 0.76~0.94，较短窗口因 whipshaw 偏低。</p>
+    <p><b>③ 成本敏感（sma200/inv_vol，万1 → 千1）</b></p>
+    <table>
+      <thead><tr><th>佣金</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">回撤</th><th>vs 基线(0.66)</th></tr></thead>
+      <tbody>
+        <tr><td>万1</td><td class="num">9.3%</td><td class="num pos">1.08</td><td class="num">−7.8%</td><td>跑赢</td></tr>
+        <tr><td>万2</td><td class="num">9.2%</td><td class="num pos">1.06</td><td class="num">−7.8%</td><td>跑赢</td></tr>
+        <tr><td>万5</td><td class="num">9.1%</td><td class="num pos">1.05</td><td class="num">−7.8%</td><td>跑赢</td></tr>
+        <tr><td>千1</td><td class="num">8.8%</td><td class="num pos">1.02</td><td class="num">−7.8%</td><td>跑赢</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">佣金涨 10 倍（万1→千1），Sharpe 仅 1.08→1.02，始终跑赢等权基线——方法月频调仓、低换手，对成本稳健。</p>
+    <div class="callout">结论：跨资产趋势跟随（200日SMA + 逆波动率）通过 walk-forward 隔离验证、参数成簇、成本稳健三重测试，是本项目目前唯一经得起「防过拟合」铁律检验的方法，可信任、可落地。</div>
+  </div>
+
+  <div class="card">
     <h2>可复跑脚本（已 git commit，未 push）</h2>
     <span class="pill">tools/index_support_check.py · 44ae26f</span>
     <span class="pill">tools/index_bounce_strategy.py · 0c4e049</span>

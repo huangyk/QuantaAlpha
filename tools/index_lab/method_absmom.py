@@ -51,6 +51,9 @@ def abs_momentum_etf(codes, start, end, signal="absmom", lookback=252, skip=21,
         data = _load_etf(cur, codes, start, end)
     finally:
         con.close()
+    if not data:
+        raise DataError("该区间内无任何ETF数据")
+    codes = list(data.keys())   # 只用实际有数据的标的，避免子窗口子集 KeyError
 
     all_days = sorted(set().union(*[set(g.index) for g in data.values()]))
     warmup = (lookback + skip) if signal == "absmom" else sma_w
