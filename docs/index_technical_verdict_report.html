@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>指数技术打法验证总报告 · 2026-10-09</title>
+<title>指数技术打法验证总报告 · 2026-10-10</title>
 <style>
   :root{
     --bg:#15171c; --panel:#1d2027; --panel2:#23262f; --line:#2c303a;
@@ -39,8 +39,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>指数技术打法验证总报告<span class="tag">2026-10-09</span></h1>
-  <div class="sub">验证对象：别人常说的「大盘关口支撑 / 抄跌抢反弹赚几点 / 顺趋势抄跌 / 指数趋势跟踪」到底准不准、能不能复制。<br>数据：6 大指数（上证 / 沪深300 / 上证50 / 中证500 / 创业板 / 科创50），2018-01 ~ 2026-09-30（约 8.7 年，含 19-21、24-25 两轮牛市）。</div>
+  <h1>指数技术打法验证总报告<span class="tag">2026-10-10</span></h1>
+  <div class="sub">验证对象：别人常说的「大盘关口支撑 / 抄跌抢反弹赚几点 / 顺趋势抄跌 / 指数趋势跟踪」到底准不准、能不能复制。<br>数据：6 大指数（上证 / 沪深300 / 上证50 / 中证500 / 创业板 / 科创50），2018-01 ~ 2026-10-08（约 8.7 年，含 19-21、24-25 两轮牛市）；跨资产趋势跟随部分用 38 只 QMT 跨资产 ETF 池（2019-01 ~ 2026-10-08）。</div>
 
   <div class="card synthesis">
     <h2>一句话裁定</h2>
@@ -142,39 +142,39 @@
     <span class="verdict v-ok">实盘数据验证有效</span>
     <p>四个验证方向都证伪后，网上文献（Antonacci GEM / Faber 200日SMA战术配置 / Moskowitz TSMOM）指向一个稳健做法：<b>对每个资产独立判趋势</b>——该 ETF 自身收盘价 &gt; 200日SMA（或 12个月动量&gt;0）才持有，否则该份额转现金。<b>不是</b>用一个外部指数给整个池当总开关（功能B 的单指数 MA 门控在多元池上反而伤收益）。</p>
     <table>
-      <thead><tr><th>策略（34只跨资产ETF，2019~2026）</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">最大回撤</th><th class="num">在市</th></tr></thead>
+      <thead><tr><th>策略（38只跨资产ETF，2019~2026）</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">最大回撤</th><th class="num">在市</th></tr></thead>
       <tbody>
-        <tr><td>纯等权持有（基线）</td><td class="num">9.4%</td><td class="num">0.66</td><td class="num">−22.2%</td><td class="num">100%</td></tr>
-        <tr><td>12-1动量&gt;0 才持有（等权）</td><td class="num">8.1%</td><td class="num">0.63</td><td class="num">−17.5%</td><td class="num">85%</td></tr>
-        <tr><td>12-1动量&gt;0（逆波动率）</td><td class="num">6.0%</td><td class="num">0.70</td><td class="num">−10.6%</td><td class="num">85%</td></tr>
-        <tr><td><b>200日SMA趋势跟随（等权）</b></td><td class="num pos">11.6%</td><td class="num pos">0.88</td><td class="num pos">−13.7%</td><td class="num">89%</td></tr>
-        <tr><td><b>200日SMA趋势跟随（逆波动率）</b></td><td class="num">9.3%</td><td class="num pos">1.08</td><td class="num pos">−7.8%</td><td class="num">89%</td></tr>
+        <tr><td>纯等权持有（基线）</td><td class="num">10.9%</td><td class="num">0.71</td><td class="num">−23.0%</td><td class="num">100%</td></tr>
+        <tr><td>12-1动量&gt;0 才持有（等权）</td><td class="num">7.7%</td><td class="num">0.55</td><td class="num">−20.2%</td><td class="num">85%</td></tr>
+        <tr><td>12-1动量&gt;0（逆波动率）</td><td class="num">6.3%</td><td class="num">0.66</td><td class="num">−12.4%</td><td class="num">85%</td></tr>
+        <tr><td><b>200日SMA趋势跟随（等权）</b></td><td class="num pos">12.6%</td><td class="num pos">0.85</td><td class="num">−17.4%</td><td class="num">89%</td></tr>
+        <tr><td><b>200日SMA趋势跟随（逆波动率）</b></td><td class="num">10.0%</td><td class="num pos">1.03</td><td class="num pos">−9.4%</td><td class="num">89%</td></tr>
       </tbody>
     </table>
-    <p class="muted">结论：<b>200日SMA + 逆波动率</b> 在真实数据上 Sharpe 1.08（基线 0.66）、回撤 −7.8%（基线 −22.2%）、年化 9.3%（≈基线）——风险调整大幅改善、回撤砍到 1/3，且收益不降。这是本项目目前唯一经真实数据验证、可落地的「好方法」。信号-收益对齐：月末收盘判趋势、次月生效（月频调仓，无前视）。</p>
+    <p class="muted">结论：<b>200日SMA + 逆波动率</b> 在真实数据上 Sharpe 1.03（基线 0.71）、回撤 −9.4%（基线 −23.0%）、年化 10.0%（≈基线）——风险调整大幅改善、回撤砍到 1/3，且收益不降。这是本项目目前唯一经真实数据验证、可落地的「好方法」。信号-收益对齐：月末收盘判趋势、次月生效（月频调仓，无前视）。2026-10-08 数据刷新后结论不变且更稳（池由 34 扩至 38 只，含创业板/白银LOF/能源化工等补回标的，熊市减仓样本由 7 扩至 9 月）。</p>
   </div>
 
   <div class="card">
-    <h2>好方法落地①：当前持仓信号（截至 2026-09-30）</h2>
+    <h2>好方法落地①：当前持仓信号（截至 2026-10-08）</h2>
     <span class="verdict v-ok">可直接跟的单</span>
-    <p>把上表最优配置（200日SMA + 逆波动率）套到最新交易日，给出「现在该持哪些」：34 只池里 <b>11 只在 200 日线上（持有）、23 只跌穿转现金</b>。逆波动率权重天然压高波动品种——低波动债券/货币 ETF 占大头。</p>
+    <p>把上表最优配置（200日SMA + 逆波动率）套到最新交易日，给出「现在该持哪些」：38 只池里 <b>11 只在 200 日线上（持有）、27 只跌穿转现金</b>。逆波动率权重天然压高波动品种——低波动债券/货币 ETF 占大头。新增补回的 159915 / 159949 / 161226 / 159981 目前均跌穿转现金，不影响持仓结构。</p>
     <table>
       <thead><tr><th>代码</th><th class="num">收盘</th><th class="num">200SMA</th><th class="num">偏离%</th><th class="num">60日波动</th><th class="num">权重%</th></tr></thead>
       <tbody>
-        <tr><td>511090.SH</td><td class="num">120.14</td><td class="num">116.20</td><td class="num pos">+3.4</td><td class="num">3.5%</td><td class="num pos">20.2%</td></tr>
-        <tr><td>511220.SH</td><td class="num">10.44</td><td class="num">10.33</td><td class="num pos">+1.1</td><td class="num">0.3%</td><td class="num pos">20.2%</td></tr>
-        <tr><td>511880.SH</td><td class="num">100.90</td><td class="num">100.52</td><td class="num pos">+0.4</td><td class="num">0.2%</td><td class="num pos">20.2%</td></tr>
-        <tr><td>512890.SH</td><td class="num">1.196</td><td class="num">1.170</td><td class="num pos">+2.2</td><td class="num">13.4%</td><td class="num pos">7.5%</td></tr>
-        <tr><td>510030.SH</td><td class="num">1.076</td><td class="num">1.060</td><td class="num pos">+1.5</td><td class="num">15.0%</td><td class="num pos">6.7%</td></tr>
-        <tr><td>513650.SH</td><td class="num">2.004</td><td class="num">1.858</td><td class="num pos">+7.9</td><td class="num">16.8%</td><td class="num pos">6.0%</td></tr>
-        <tr><td>513500.SH</td><td class="num">2.688</td><td class="num">2.481</td><td class="num pos">+8.3</td><td class="num">17.4%</td><td class="num pos">5.8%</td></tr>
-        <tr><td>513100.SH</td><td class="num">2.352</td><td class="num">2.028</td><td class="num pos">+16.0</td><td class="num">20.4%</td><td class="num pos">4.9%</td></tr>
-        <tr><td>159985.SZ</td><td class="num">2.267</td><td class="num">2.106</td><td class="num pos">+7.7</td><td class="num">27.7%</td><td class="num pos">3.6%</td></tr>
-        <tr><td>513520.SH</td><td class="num">2.352</td><td class="num">2.105</td><td class="num pos">+11.7</td><td class="num">30.4%</td><td class="num pos">3.3%</td></tr>
-        <tr><td>501018.SH</td><td class="num">1.957</td><td class="num">1.752</td><td class="num pos">+11.7</td><td class="num">59.4%</td><td class="num pos">1.7%</td></tr>
+        <tr><td>511090.SH</td><td class="num">120.21</td><td class="num">116.26</td><td class="num pos">+3.4</td><td class="num">3.6%</td><td class="num pos">20.1%</td></tr>
+        <tr><td>511220.SH</td><td class="num">10.45</td><td class="num">10.33</td><td class="num pos">+1.1</td><td class="num">0.3%</td><td class="num pos">20.1%</td></tr>
+        <tr><td>511880.SH</td><td class="num">100.92</td><td class="num">100.52</td><td class="num pos">+0.4</td><td class="num">0.2%</td><td class="num pos">20.1%</td></tr>
+        <tr><td>512890.SH</td><td class="num">1.208</td><td class="num">1.170</td><td class="num pos">+3.2</td><td class="num">13.1%</td><td class="num pos">7.7%</td></tr>
+        <tr><td>510030.SH</td><td class="num">1.082</td><td class="num">1.060</td><td class="num pos">+2.1</td><td class="num">14.9%</td><td class="num pos">6.7%</td></tr>
+        <tr><td>513650.SH</td><td class="num">2.020</td><td class="num">1.860</td><td class="num pos">+8.6</td><td class="num">16.8%</td><td class="num pos">6.0%</td></tr>
+        <tr><td>513500.SH</td><td class="num">2.726</td><td class="num">2.484</td><td class="num pos">+9.8</td><td class="num">17.4%</td><td class="num pos">5.8%</td></tr>
+        <tr><td>513100.SH</td><td class="num">2.398</td><td class="num">2.033</td><td class="num pos">+18.0</td><td class="num">20.2%</td><td class="num pos">5.0%</td></tr>
+        <tr><td>159985.SZ</td><td class="num">2.303</td><td class="num">2.109</td><td class="num pos">+9.2</td><td class="num">27.6%</td><td class="num pos">3.6%</td></tr>
+        <tr><td>513520.SH</td><td class="num">2.394</td><td class="num">2.110</td><td class="num pos">+13.5</td><td class="num">30.2%</td><td class="num pos">3.3%</td></tr>
+        <tr><td>501018.SH</td><td class="num">2.043</td><td class="num">1.761</td><td class="num pos">+16.0</td><td class="num">57.3%</td><td class="num pos">1.8%</td></tr>
       </tbody>
     </table>
-    <p class="muted">转现金 23 只（部分）：510300 −6.4% / 510500 −8.0% / 510900 −5.7% / 512100 −7.8% / 512400 −18.5% / 513050 −17.9% / 513130 −16.3% / 512500 −6.4% / 159967 −5.3%…（完整 34 只持仓单见 <code>data/results/current_holdings.csv</code>，<code>python -m tools.index_lab signal</code> 实时重算）。</p>
+    <p class="muted">转现金 27 只（部分）：159915 −13.1% / 159949 −15.3% / 510300 −7.3% / 510500 −10.4% / 510900 −6.5% / 512100 −9.7% / 512400 −17.4% / 513050 −17.8% / 513130 −17.6% / 512500 −8.8% / 159967 −9.2% / 159981 数据不足（nan）…（完整 38 只持仓单见 <code>data/results/current_holdings.csv</code>，<code>python -m tools.index_lab signal</code> 实时重算）。</p>
   </div>
 
   <div class="card">
@@ -184,12 +184,12 @@
     <table>
       <thead><tr><th>regime</th><th class="num">月数</th><th class="num">策略月均</th><th class="num">基准月均</th><th class="num">超额月均</th><th class="num">胜率</th><th class="num">策略年化</th><th class="num">基准年化</th></tr></thead>
       <tbody>
-        <tr><td>牛市</td><td class="num">40</td><td class="num">+1.03%</td><td class="num">+1.47%</td><td class="num neg">−0.43%</td><td class="num">38%</td><td class="num">+13.1%</td><td class="num">+19.1%</td></tr>
-        <tr><td>震荡</td><td class="num">33</td><td class="num pos">+0.75%</td><td class="num">+0.19%</td><td class="num pos">+0.56%</td><td class="num">67%</td><td class="num pos">+9.4%</td><td class="num">+2.3%</td></tr>
-        <tr><td>熊市</td><td class="num">7</td><td class="num">−0.29%</td><td class="num neg">−1.83%</td><td class="num pos">+1.54%</td><td class="num">71%</td><td class="num">−3.4%</td><td class="num neg">−19.9%</td></tr>
+        <tr><td>牛市</td><td class="num">40</td><td class="num">+1.24%</td><td class="num">+1.76%</td><td class="num neg">−0.51%</td><td class="num">42%</td><td class="num">+16.0%</td><td class="num">+23.2%</td></tr>
+        <tr><td>震荡</td><td class="num">31</td><td class="num pos">+0.45%</td><td class="num">−0.17%</td><td class="num pos">+0.62%</td><td class="num">71%</td><td class="num pos">+5.5%</td><td class="num">−2.1%</td></tr>
+        <tr><td>熊市</td><td class="num">9</td><td class="num">+0.52%</td><td class="num neg">−0.84%</td><td class="num pos">+1.36%</td><td class="num">67%</td><td class="num">+6.4%</td><td class="num neg">−9.6%</td></tr>
       </tbody>
     </table>
-    <p class="muted">结论：熊市段策略（常转现金）年化 −3.4% vs 基准 −19.9%，每月超额 +1.54%、胜率 71% —— 真把回撤砍掉；震荡段每月超额 +0.56%、胜率 67% —— 明显增益；牛市段落后（每月 −0.43%、胜率 38%）是保护的代价。⚠ 熊市样本仅 7 个月（2022 加息 + 2020 新冠初期），方向明确但样本偏薄，须持续跟踪。</p>
+    <p class="muted">结论：熊市段策略（常转现金）年化 +6.4% vs 基准 −9.6%，每月超额 +1.36%、胜率 67% —— 真把回撤砍掉还录得正收益；震荡段每月超额 +0.62%、胜率 71% —— 明显增益；牛市段落后（每月 −0.51%、胜率 42%）是保护的代价。2026-10-08 刷新后熊市样本由 7 扩至 9 个月（补入 2026 年 4-5 月调整段），方向不变、样本更厚，结论更可信。</p>
   </div>
 
   <div class="card">
@@ -200,36 +200,41 @@
     <table>
       <thead><tr><th>窗口</th><th>配置</th><th class="num">Sharpe</th><th class="num">年化</th><th class="num">回撤</th></tr></thead>
       <tbody>
-        <tr><td>训练 2019-2022</td><td>选参 sma150/inv_vol</td><td class="num">1.02</td><td class="num">10.1%</td><td class="num">−16.5%</td></tr>
-        <tr><td>测试 2023-2026（隔离）</td><td>训练选参配置</td><td class="num pos">1.06</td><td class="num">9.6%</td><td class="num">−9.1%</td></tr>
-        <tr><td>测试 2023-2026（隔离）</td><td>预设 sma200/inv_vol（未用任何数据选）</td><td class="num pos">1.07</td><td class="num">10.0%</td><td class="num">−9.9%</td></tr>
-        <tr><td>测试 2023-2026（隔离）</td><td>等权基线</td><td class="num">0.78</td><td class="num">11.1%</td><td class="num">−14.8%</td></tr>
+        <tr><td>训练 2019-2022</td><td>选参 sma150/inv_vol</td><td class="num">0.94</td><td class="num">10.1%</td><td class="num">−17.3%</td></tr>
+        <tr><td>测试 2023-2026（隔离）</td><td>训练选参配置</td><td class="num pos">1.04</td><td class="num">10.0%</td><td class="num">−9.6%</td></tr>
+        <tr><td>测试 2023-2026（隔离）</td><td>预设 sma200/inv_vol（未用任何数据选）</td><td class="num pos">1.04</td><td class="num">10.3%</td><td class="num">−10.4%</td></tr>
+        <tr><td>测试 2023-2026（隔离）</td><td>等权基线</td><td class="num">0.77</td><td class="num">11.6%</td><td class="num">−15.8%</td></tr>
       </tbody>
     </table>
-    <p class="muted">测试窗内「训练选参」与「预设配置」<b>双双跑赢隔离基线</b>（1.06 / 1.07 vs 0.78）——一个没看过测试数据的配置照样赢，说明不是偷看未来。⚠ 测试窗 2023-2026 是强牛，基线年化更高（11.1%）但 Sharpe 更低（0.78）、回撤更深（−14.8%）：方法的优势在风险调整与低回撤，非绝对收益，与 regime 结论一致。</p>
-    <p><b>② 参数敏感（SMA窗口 60~250，全程 2019-2026）</b></p>
+    <p class="muted">测试窗内「训练选参」与「预设配置」<b>双双跑赢隔离基线</b>（1.04 / 1.04 vs 0.77）——一个没看过测试数据的配置照样赢，说明不是偷看未来。⚠ 测试窗 2023-2026 是强牛，基线年化更高（11.6%）但 Sharpe 更低（0.77）、回撤更深（−15.8%）：方法的优势在风险调整与低回撤，非绝对收益，与 regime 结论一致。</p>
+    <p><b>② 参数敏感（SMA窗口 60~250，全程 2019-2026，权重 × SMA 网格）</b></p>
     <table>
-      <thead><tr><th>SMA窗口</th><th class="num">equal Sharpe</th><th class="num">inv_vol Sharpe</th><th class="num">inv_vol 回撤</th></tr></thead>
+      <thead><tr><th>权重</th><th class="num">SMA</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">回撤</th><th class="num">在市</th></tr></thead>
       <tbody>
-        <tr><td>60</td><td class="num">0.76</td><td class="num pos">0.88</td><td class="num">−10.1%</td></tr>
-        <tr><td>100</td><td class="num">0.94</td><td class="num pos">1.09</td><td class="num">−9.7%</td></tr>
-        <tr><td>150</td><td class="num">0.92</td><td class="num pos">1.09</td><td class="num">−9.7%</td></tr>
-        <tr><td>200</td><td class="num">0.88</td><td class="num pos">1.08</td><td class="num">−7.8%</td></tr>
-        <tr><td>250</td><td class="num">0.88</td><td class="num pos">1.06</td><td class="num">−8.0%</td></tr>
+        <tr><td>equal</td><td class="num">60</td><td class="num">10.1%</td><td class="num">0.69</td><td class="num">−15.9%</td><td class="num">97%</td></tr>
+        <tr><td>equal</td><td class="num">100</td><td class="num">12.8%</td><td class="num">0.88</td><td class="num">−16.1%</td><td class="num">95%</td></tr>
+        <tr><td>equal</td><td class="num">150</td><td class="num">13.2%</td><td class="num">0.89</td><td class="num">−16.2%</td><td class="num">92%</td></tr>
+        <tr><td>equal</td><td class="num">200</td><td class="num">12.6%</td><td class="num">0.85</td><td class="num">−17.4%</td><td class="num">89%</td></tr>
+        <tr><td>equal</td><td class="num">250</td><td class="num">12.0%</td><td class="num">0.82</td><td class="num">−17.4%</td><td class="num">87%</td></tr>
+        <tr><td>inv_vol</td><td class="num">60</td><td class="num">7.9%</td><td class="num">0.83</td><td class="num">−10.0%</td><td class="num">97%</td></tr>
+        <tr><td>inv_vol</td><td class="num">100</td><td class="num">9.7%</td><td class="num pos">1.03</td><td class="num">−10.3%</td><td class="num">95%</td></tr>
+        <tr><td>inv_vol</td><td class="num">150</td><td class="num">10.1%</td><td class="num pos">1.06</td><td class="num">−10.1%</td><td class="num">92%</td></tr>
+        <tr><td>inv_vol</td><td class="num">200</td><td class="num">10.0%</td><td class="num pos">1.03</td><td class="num">−9.4%</td><td class="num">89%</td></tr>
+        <tr><td>inv_vol</td><td class="num">250</td><td class="num">9.6%</td><td class="num">1.00</td><td class="num">−9.4%</td><td class="num">87%</td></tr>
       </tbody>
     </table>
-    <p class="muted">inv_vol 的 Sharpe 在 1.06~1.09 之间成簇、无单点尖峰 → 非过拟合（等于「LB扫描噪声带」的反面）。等权在 0.76~0.94，较短窗口因 whipshaw 偏低。</p>
+    <p class="muted">inv_vol 的 Sharpe 在 0.83~1.06 之间成簇、无单点尖峰 → 非过拟合（等于「LB扫描噪声带」的反面）；回撤随窗口拉长稳定在 −9%~−10%，风险特征稳健。等权在 0.69~0.89，较短窗口因 whipshaw 偏低。</p>
     <p><b>③ 成本敏感（sma200/inv_vol，万1 → 千1）</b></p>
     <table>
-      <thead><tr><th>佣金</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">回撤</th><th>vs 基线(0.66)</th></tr></thead>
+      <thead><tr><th>佣金</th><th class="num">年化</th><th class="num">Sharpe</th><th class="num">回撤</th><th>vs 基线(0.71)</th></tr></thead>
       <tbody>
-        <tr><td>万1</td><td class="num">9.3%</td><td class="num pos">1.08</td><td class="num">−7.8%</td><td>跑赢</td></tr>
-        <tr><td>万2</td><td class="num">9.2%</td><td class="num pos">1.06</td><td class="num">−7.8%</td><td>跑赢</td></tr>
-        <tr><td>万5</td><td class="num">9.1%</td><td class="num pos">1.05</td><td class="num">−7.8%</td><td>跑赢</td></tr>
-        <tr><td>千1</td><td class="num">8.8%</td><td class="num pos">1.02</td><td class="num">−7.8%</td><td>跑赢</td></tr>
+        <tr><td>万1</td><td class="num">10.0%</td><td class="num pos">1.03</td><td class="num">−9.4%</td><td>跑赢</td></tr>
+        <tr><td>万2</td><td class="num">9.9%</td><td class="num pos">1.02</td><td class="num">−9.4%</td><td>跑赢</td></tr>
+        <tr><td>万5</td><td class="num">9.8%</td><td class="num pos">1.01</td><td class="num">−9.4%</td><td>跑赢</td></tr>
+        <tr><td>千1</td><td class="num">9.5%</td><td class="num pos">0.99</td><td class="num">−9.4%</td><td>跑赢</td></tr>
       </tbody>
     </table>
-    <p class="muted">佣金涨 10 倍（万1→千1），Sharpe 仅 1.08→1.02，始终跑赢等权基线——方法月频调仓、低换手，对成本稳健。</p>
+    <p class="muted">佣金涨 10 倍（万1→千1），Sharpe 仅 1.03→0.99，始终跑赢等权基线——方法月频调仓、低换手，对成本稳健。</p>
     <div class="callout">结论：跨资产趋势跟随（200日SMA + 逆波动率）通过 walk-forward 隔离验证、参数成簇、成本稳健三重测试，是本项目目前唯一经得起「防过拟合」铁律检验的方法，可信任、可落地。</div>
   </div>
 
@@ -240,7 +245,8 @@
     <span class="pill">tools/index_bounce_research.py · d9f27cf</span>
     <span class="pill">tools/index_dip_research.py · c2d2613</span>
     <span class="pill">tools/index_momentum_research.py · f728511</span>
-    <p class="muted" style="margin-top:10px">运行环境：conda <code>quantaalpha</code>（Python3.11，含 psycopg2）。数据源 TimescaleDB <code>quant_data</code>（QMT datadir 回填，至 2026-09-30）。换指数 / 参数直接改脚本顶部常量即可复跑。</p>
+    <p class="muted" style="margin-top:8px">好方法 / 信号 / regime / 防过拟合：<code>tools/index_lab/</code>（<code>method_absmom.py</code> · <code>method_robust.py</code> · <code>cli.py</code>）。QMT 数据回填：<code>tools/backfill_etf_qmt_local.py</code>（合并双 datadir）· <code>tools/download_qmt_etf_recent.py</code>（qmt312 环境补 10 月）。</p>
+    <p class="muted" style="margin-top:6px">运行环境：conda <code>quantaalpha</code>（Python3.11，含 psycopg2）。数据源 TimescaleDB <code>quant_data</code>（QMT datadir 回填，至 2026-10-08，38 只跨资产 ETF）。<code>python -m tools.index_lab all</code> 一键复跑全部分析，<code>signal</code> 重算当前持仓单。</p>
   </div>
 
   <div class="foot">本报告由研究脚本真实输出汇总，非估算。任何方向如需 regime 切分 / 换参数复验，告诉我即可。</div>

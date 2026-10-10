@@ -35,6 +35,12 @@ import psycopg2
 DB = dict(host="127.0.0.1", port=5432, dbname="quant_data",
           user="quant", password="quant123456")
 QMT_DATADIR = r"D:/中航证券QMT实盘-交易端/datadir"
+# 两个数据目录都可能存在该 code 的 .DAT：miniQMT 实时写入 userdata_mini(新鲜,
+# 但部分标的历史短), 旧 datadir 历史完整。回填时合并两者取全集(去重+按时间排序)。
+QMT_DATADIRS = [
+    os.path.join(r"D:/中航证券QMT实盘-交易端/userdata_mini/datadir"),  # 运行中 miniQMT 实时写入
+    r"D:/中航证券QMT实盘-交易端/datadir",                                # 旧回填目录(历史全)
+]
 
 # 七星高照 V1.7.2 跨资产 ETF 池(39 只; 库内 datadir 实测覆盖 34 只)
 POOL = {
@@ -127,6 +133,59 @@ def parse_dat(path):
     return rows, splits
 
 
+def read_raw_records(path):
+    """读取单个 .DAT 的全部原始 16-int 记录(未复权)。无则返回 []。"""
+    if not os.path.exists(path):
+        return []
+    b = open(path, "rb").read()
+    off, rec = 8, 64
+    n = (len(b) - off) // rec
+    if n <= 0:
+        return []
+    return [struct.unpack("<" + "i" * 16, b[off + i * rec: off + i * rec + 64])
+            for i in range(n)]
+
+
+def parse_code(code):
+    """合并所有 QMT_DATADIRS 中该 code 的原始记录 -> 后向复权 rows + 拆份数。
+
+    旧 datadir 历史全但停在 9/29；userdata_mini 有 10 月新鲜数据但部分标的历史短。
+    合并+去重(同 ts)+按时间排序后统一做拆份修正, 得到完整且最新的序列。
+    """
+    raw = []
+    for d in QMT_DATADIRS:
+        p = os.path.join(d, market_of(code[:6]), "86400", code[:6] + ".DAT")
+        raw.extend(read_raw_records(p))
+    if not raw:
+        return [], 0
+    seen = {}
+    for v in raw:
+        seen[v[0]] = v                      # 同时间戳去重
+    vals = [seen[k] for k in sorted(seen)]
+    n = len(vals)
+    o = [v[1] / 1000.0 for v in vals]
+    h = [v[2] / 1000.0 for v in vals]
+    l = [v[3] / 1000.0 for v in vals]
+    c = [v[4] / 1000.0 for v in vals]
+    v = [v[6] for v in vals]
+    a = [v[8] for v in vals]
+    mf = 1.0
+    adj_o, adj_h, adj_l, adj_c = [0.0] * n, [0.0] * n, [0.0] * n, [0.0] * n
+    splits = 0
+    for i in range(n - 1, -1, -1):
+        adj_o[i] = o[i] * mf; adj_h[i] = h[i] * mf
+        adj_l[i] = l[i] * mf; adj_c[i] = c[i] * mf
+        if i > 0:
+            s = detect_split(c[i], c[i - 1])
+            if s != 1.0:
+                mf *= s; splits += 1
+    rows = []
+    for i in range(n):
+        d = dt.datetime.fromtimestamp(vals[i][0], tz=timezone.utc).date()
+        rows.append((d, adj_o[i], adj_h[i], adj_l[i], adj_c[i], v[i], a[i]))
+    return rows, splits
+
+
 def upsert(cur, code, rows):
     """按 (asset_code, trade_date) 去重写入。
 
@@ -172,15 +231,9 @@ def main():
     cur = conn.cursor()
     ok, miss, total_rows = 0, [], 0
     for code, name in POOL.items():
-        m = market_of(code[:6])
-        p = os.path.join(QMT_DATADIR, m, "86400", code[:6] + ".DAT")
-        if not os.path.exists(p):
-            print(f"  {code} {name:<10} datadir 缺失(跳过)")
-            miss.append(code)
-            continue
-        rows, splits = parse_dat(p)
+        rows, splits = parse_code(code)
         if not rows:
-            print(f"  {code} {name:<10} 空文件(跳过)")
+            print(f"  {code} {name:<10} 所有 datadir 缺失(跳过)")
             miss.append(code)
             continue
         n = upsert(cur, code, rows)
