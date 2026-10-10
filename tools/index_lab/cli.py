@@ -17,7 +17,8 @@ import pandas as pd
 
 from . import config
 from .io_db import load_ohlc, DataError, load_etf_universe
-from . import support, bounce, dip, momentum, calltracker, etf_guard, method_absmom, method_robust
+from . import (support, bounce, dip, momentum, calltracker, etf_guard,
+               method_absmom, method_robust, method_higher)
 
 
 # ---------- 数据 ----------
@@ -213,6 +214,77 @@ def cmd_robust():
     print("  -> 千1 佣金下仍跑赢等权基线 => 结论对成本稳健")
 
 
+def cmd_higher():
+    print("\n===== 高收益 sleeve 探索：高beta池 / TopK动量集中（含防过拟合三重测试） =====")
+    try:
+        r = method_higher.run_higher()
+    except DataError as e:
+        print(f"  [跳过] {e}")
+        return
+    print(f"  池 全{ r['n_all']} 只 / 高beta {r['n_hb']} 只（剔除纯固收货币: "
+          f"511010/511090/511220/511880），区间 {r['start']}~{r['end']}")
+    print(f"  {'基线/配置':<26}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'在市':>8}{'调仓':>6}")
+    for k, g in r["baselines"].items():
+        print(f"  [基线]{k:<20}{g['ann']*100:>8.1f}%{g['sharpe']:>9.2f}{g['mdd']*100:>8.1f}%"
+              f"{g['time_in_market']*100:>7.0f}%{g['n_rebal']:>6}")
+    for k, g in r["configs"].items():
+        print(f"  {k:<26}{g['ann']*100:>8.1f}%{g['sharpe']:>9.2f}{g['mdd']*100:>8.1f}%"
+              f"{g['time_in_market']*100:>7.0f}%{g['n_rebal']:>6}")
+    best_sh = max(r["configs"].items(), key=lambda kv: kv[1]["sharpe"])
+    best_ann = max(r["configs"].items(), key=lambda kv: kv[1]["ann"])
+    print(f"  -> 风险调整最优: {best_sh[0]} (Sharpe {best_sh[1]['sharpe']:.2f})")
+    print(f"  -> 绝对收益最高: {best_ann[0]} (年化 {best_ann[1]['ann']*100:.1f}%)")
+
+    # 防过拟合三重测试
+    print("  -- walk-forward (训练窗选参 -> 隔离测试窗验证, 基线=高beta池等权) --")
+    try:
+        wf = method_higher.walk_forward_higher()
+        print(f"  训练 {wf['train_win'][0]}~{wf['train_win'][1]}: 选参 {wf['train']['config']} "
+              f"Sharpe {wf['train']['sharpe']:.2f} / 年化 {wf['train']['ann']*100:.1f}% / 回撤 {wf['train']['mdd']*100:.1f}%")
+        print(f"  测试 {wf['test_win'][0]}~{wf['test_win'][1]} (隔离):")
+        for key, lab in (("test_best", "训练选参"), ("test_pre", "预设 topk3/inv_vol"), ("test_base", "等权基线")):
+            x = wf[key]
+            print(f"    {lab:<18} Sharpe {x['sharpe']:.2f} / 年化 {x['ann']*100:.1f}% / 回撤 {x['mdd']*100:.1f}%")
+        tb, tp, bb = wf["test_best"]["sharpe"], wf["test_pre"]["sharpe"], wf["test_base"]["sharpe"]
+        print(f"  -> 测试窗: 选参{'跑赢' if tb > bb else '跑输'}基线({tb:.2f} vs {bb:.2f}); "
+              f"预设{'跑赢' if tp > bb else '跑输'}基线({tp:.2f} vs {bb:.2f})")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    # H1 专项：只在高beta池(不做TopK集中)内选参 -> 隔离验证
+    print("  -- H1 专项 walk-forward (高beta池 topk=None, 基线=高beta池等权) --")
+    try:
+        wf1 = method_higher.walk_forward_higher(topks=(None,), preset_topk=None)
+        print(f"  训练 {wf1['train_win'][0]}~{wf1['train_win'][1]}: 选参 {wf1['train']['config']} "
+              f"Sharpe {wf1['train']['sharpe']:.2f} / 年化 {wf1['train']['ann']*100:.1f}% / 回撤 {wf1['train']['mdd']*100:.1f}%")
+        print(f"  测试 {wf1['test_win'][0]}~{wf1['test_win'][1]} (隔离):")
+        for key, lab in (("test_best", "训练选参"), ("test_pre", "预设 inv_vol"), ("test_base", "等权基线")):
+            x = wf1[key]
+            print(f"    {lab:<18} Sharpe {x['sharpe']:.2f} / 年化 {x['ann']*100:.1f}% / 回撤 {x['mdd']*100:.1f}%")
+        tb, bb = wf1["test_best"]["sharpe"], wf1["test_base"]["sharpe"]
+        print(f"  -> H1 测试窗: 选参{'跑赢' if tb > bb else '跑输'}基线({tb:.2f} vs {bb:.2f})")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    print("  -- TopK 参数敏感 (全程) --")
+    try:
+        for x in method_higher.param_topk():
+            print(f"    topk={x['topk']:<3}{x['weight']:<9}年化{x['ann']*100:>7.1f}%"
+                  f"  Sharpe {x['sharpe']:>5.2f}  回撤{x['mdd']*100:>7.1f}%  在市{x['time_in_market']*100:>4.0f}%")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    print("  -- 成本敏感 (H1: 高beta池 topk=None/inv_vol, 万1~千1, 对高beta池等权基线) --")
+    try:
+        for x in method_higher.cost_sens_higher(topk=None, weight="inv_vol"):
+            cstr = f"万{int(x['cost']*10000)}" if x["cost"] < 0.001 else f"千{int(x['cost']*1000)}"
+            print(f"    {cstr:>4}  年化{x['ann']*100:>7.1f}%  Sharpe {x['sharpe']:>5.2f}"
+                  f"  回撤{x['mdd']*100:>7.1f}%  基线Sharpe {x['base_sharpe']:.2f}  "
+                  f"{'跑赢' if x['beats'] else '跑输'}")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+
 def cmd_calltracker(json_path=None):
     print("\n===== 功能A call tracker（博主判断按时间戳打分） =====")
     if json_path:
@@ -252,6 +324,7 @@ def cmd_all():
     cmd_signal()
     cmd_regime()
     cmd_robust()
+    cmd_higher()
     cmd_calltracker()
     print("\n" + "=" * 64)
     print("  裁定：四个验证方向(支撑/抢反弹/抄跌/趋势)均无压倒性可复制 edge；")
@@ -266,7 +339,7 @@ def main():
     ap = argparse.ArgumentParser(prog="index_lab", description="指数技术打法验证统一包")
     ap.add_argument("cmd", nargs="?", default="all",
                     choices=["all", "support", "bounce", "dip", "momentum", "etfguard",
-                             "absmom", "signal", "regime", "robust", "calltracker"])
+                             "absmom", "signal", "regime", "robust", "higher", "calltracker"])
     ap.add_argument("calls", nargs="?", default=None,
                     help="calltracker 子命令的 JSON 路径（可选）")
     args = ap.parse_args()
@@ -291,6 +364,8 @@ def main():
             cmd_regime()
         elif args.cmd == "robust":
             cmd_robust()
+        elif args.cmd == "higher":
+            cmd_higher()
         elif args.cmd == "calltracker":
             cmd_calltracker(args.calls)
     except DataError as e:
