@@ -1,0 +1,303 @@
+#coding:gbk
+# -*- coding: utf-8 -*-
+"""
+跨资产趋势跟随（200日SMA + 逆波动率）— 迅投 QMT 模型版
+==========================================================
+【本文件可直接放入 QMT 策略目录后在 QMT 内运行】
+  目标目录: {QMT安装目录}/python/
+  运行方式: QMT「模型研究」→ 选中策略 → 回测；「模型交易」→ 挂载实盘/模拟
+
+【逻辑（与研究端 tools/index_lab/method_absmom.py 逐行一致）】
+  - 每月末对 POOL 每只 ETF 判断：close > 200日SMA -> 持有，否则该份额转现金
+  - 持有子集内按逆波动率分配权重 w_i = 1/max(sigma_i, 0.05)，sigma=60日年化波动
+  - 月频调仓；信号用当日收盘价判定，次月首个交易日按开盘价附近成交
+  - EXPOSURE 控制风险暴露：1.0=满仓(主用档) / 0.6=低回撤档
+
+【QMT API 说明（已核对本机 _PyContextInfo.py，避免踩坑）】
+  - passorder / get_trade_detail_data / account 是 QMT 注入到【全局命名空间】的
+    函数与变量，不在 ContextInfo 里；已做多路兜底取用。
+  - 取行情用 get_market_data_ex（QMT 官方推荐）；get_history_data 是旧接口。
+  - 回测与实盘统一走 passorder，保证「回测所见即实盘所得」。
+  - 必须 is_last_bar() 判断，否则历史 K 线回放会疯狂废单。
+  - 金额单位：get_trade_detail_data 返回的资金字段单位为【分】，需 /100。
+
+研究端（本机 quantaalpha 环境）无 QMT 运行时，等价回测见 tools/index_lab。
+"""
+
+import numpy as np
+
+# ---------------- 参数（研究端终审冻结版）----------------
+POOL = [
+    "159915.SZ", "159949.SZ", "159967.SZ", "159981.SZ", "159985.SZ", "161226.SZ",
+    "501018.SH", "510030.SH", "510300.SH", "510500.SH", "510900.SH", "511010.SH",
+    "511090.SH", "511220.SH", "511380.SH", "511880.SH", "512100.SH", "512400.SH",
+    "512500.SH", "512890.SH", "513030.SH", "513050.SH", "513080.SH", "513090.SH",
+    "513100.SH", "513130.SH", "513180.SH", "513330.SH", "513500.SH", "513520.SH",
+    "513650.SH", "513660.SH", "513730.SH", "513980.SH", "518880.SH", "563300.SH",
+    "588000.SH", "588080.SH",
+]
+SMA_W = 200# 趋势窗口(日)
+VOL_WINDOW = 60        # 波动窗口(日)
+INV_VOL_FLOOR = 0.05        # 波动率下限，防除零
+EXPOSURE = 1.0              # ★风险暴露比例: 1.0=主用档(满仓) / 0.6=低回撤档(60%仓+40%现金)
+COMM = 0.0001               # 佣金万1
+# ETF 最小交易单位：100 份（1 手）
+LOT = 100
+# 换月容忍：月末前 N 个交易日内若尚未调仓则强制执行（N=5 约等于月初）
+REBAL_DAYS = 5
+
+# QMT 下单枚举
+OP_BUY = 23          # 买入
+OP_SELL = 24         # 卖出
+ORDER_SHARES = 1101      # 单股单账号普通股数方式（ETF 申赎只能用此参数）
+PRICE_LAST = 5            # 最新价
+QT_KLINE_END = 0          # K 线走完才下单（回测不闪烁）
+QT_NOW = 2                # 立即下单（定时器/回调里必须用）
+
+# ---------------- 全局状态 ----------------
+_G = {}
+
+
+# ---------------- QMT 运行时全局函数解析 ----------------
+def _resolve_global(name):
+    """取 QMT 注入的全局函数。QMT 把 passorder 等注入到策略全局命名空间，
+    即本模块的 globals；这里额外兜底 builtins(QMT 部分版本注入到内置)。"""
+    try:
+        v = globals().get(name)
+    except Exception:
+        v = None
+    if v is None:
+        import builtins
+        v = getattr(builtins, name, None)
+    return v
+
+def _resolve_account(ContextInfo):
+    """取交易账号。account 是 QMT 注入的全局变量，但也可能挂在 ContextInfo 上。"""
+    v = _resolve_global("account")
+    if v:
+        return str(v)
+    for name in ("account", "account_id", "accountID", "m_strAccountID"):
+        v = getattr(ContextInfo, name, None)
+        if v:
+            return str(v)
+    return ""
+
+
+def _passorder():
+    return _resolve_global("passorder")
+
+
+def _get_trade_detail():
+    return _resolve_global("get_trade_detail_data")
+
+
+# ---------------- 账户查询 ----------------
+def get_holdings(account_id):
+    """返回 {完整代码: 持仓数量(股)}。"""
+    fn = _get_trade_detail()
+    out = {}
+    if fn is None or not account_id:
+        return out
+    try:
+        rows = fn(account_id, "STOCK", "POSITION")
+    except Exception as e:
+        print("[absmom] get_holdings 失败:", e)
+        return out
+    for o in rows:
+        code = (str(getattr(o, "m_strInstrumentID", "")) + "." +
+                str(getattr(o, "m_strExchangeID", "")))
+        # QMT 各版本持仓字段名不完全一致, 逐个安全取值（缺字段不能抛异常）
+        vol = getattr(o, "m_nCanUseVolume", None)
+        if vol is None:
+            vol = getattr(o, "m_nVolume", 0)
+        try:
+            vol = int(vol)
+        except Exception:
+            vol = 0
+        if vol > 0:
+            out[code] = vol
+    return out
+
+
+def get_total_asset(account_id):
+    """返回 (总资产, 可用资金)，单位【元】。QMT 资金字段单位是分，需 /100。"""
+    fn = _get_trade_detail()
+    if fn is None or not account_id:
+        return 0.0, 0.0
+    try:
+        rows = fn(account_id, "STOCK", "ACCOUNT")
+    except Exception as e:
+        print("[absmom] get_total_asset 失败:", e)
+        return 0.0, 0.0
+    if not rows:
+        return 0.0, 0.0
+    a = rows[0]
+    total = float(getattr(a, "m_dTotalAsset", 0) or 0) / 100.0
+    avail = float(getattr(a, "m_dAvailable", 0) or 0) / 100.0
+    return total, avail
+
+
+# ---------------- 信号：核心逻辑（与研究端一致，无平台依赖）----------------
+def signal_and_weights(ContextInfo):
+    """返回 (持有代码列表, 权重字典)。用最近 SMA_W+1 根日线判定。"""
+    need = SMA_W + 1
+    closes = {}
+    try:
+        raw = ContextInfo.get_market_data_ex(
+            ["close"], POOL, period="1d", count=need,
+            dividend_type="front", fill_data=False, subscribe=False)
+    except Exception as e:
+        print("[absmom] 取行情失败:", e)
+        return [], {}
+
+    for code in POOL:
+        d = raw.get(code)
+        if d is None:
+            continue
+        arr = np.array(d["close"].values, dtype=float)
+        arr = arr[~np.isnan(arr)]
+        if len(arr) >= SMA_W:
+            closes[code] = arr
+        else:
+            _G.setdefault('short', []).append((code, len(arr)))
+
+    if _G.get('short') and not _G.get('short_warned'):
+        msg = ', '.join('%s:%d' % (c, n) for c, n in _G['short'])
+        print('[absmom] [tip] history<%d skipped: %s' % (SMA_W, msg))
+        _G['short_warned'] = True
+
+    held, inv = [], {}
+    for code, c in closes.items():
+        sma = float(np.mean(c[-SMA_W:]))
+        if c[-1] > sma:                # 趋势向上 -> 持有
+            held.append(code)
+            rets = np.diff(c) / c[:-1]  # 简单日收益，避免依赖 pandas
+            sigma = float(np.std(rets[-VOL_WINDOW:]) * np.sqrt(252))
+            inv[code] = 1.0 / max(sigma, INV_VOL_FLOOR)
+
+    if not held:
+        return [], {}
+    tot = float(sum(inv.values()))
+    return held, {x: inv[x] / tot for x in held}
+
+
+# ---------------- 生命周期 ----------------
+def init(ContextInfo):
+    ContextInfo.set_universe(POOL)
+    ContextInfo.set_commission(0, [COMM, COMM, COMM, COMM, 0, 5])
+    _G["account"] = _resolve_account(ContextInfo)
+    _G["ym"] = None            # 上次调仓的 (年, 月)
+    _G["pos_day"] = 0          # 本月已等待天数
+    _G["first_done"] = False
+    print("[absmom] init 完成; account=%s; pool=%d 只; EXPOSURE=%.2f"
+          % (_G["account"], len(POOL), EXPOSURE))
+    print("[absmom] 提示: 若 account 为空，请在【模型交易】里先绑定账号后重跑。")
+
+
+def _last_day_of_month(ContextInfo, y, m):
+    """判断当前 bar 是否为该月最后一个交易日。"""
+    ndays = ContextInfo.time_tick_size
+    d = ContextInfo.barpos
+    # 若下一根已超出本月 -> 当前就是月末
+    if d + 1 < ndays:
+        nxt = ContextInfo.get_bar_timetag(d + 1)
+        return timetag_to_datetime(nxt, "%Y-%m") != "%04d-%02d" % (y, m)
+    return True
+
+
+def handlebar(ContextInfo):
+    # 关键: 回测时历史 K 线也会触发 handlebar，必须跳过，否则疯狂废单
+    if hasattr(ContextInfo, "is_last_bar") and not ContextInfo.is_last_bar():
+        return
+
+    d = ContextInfo.barpos
+    now = timetag_to_datetime(ContextInfo.get_bar_timetag(d), "%Y-%m-%d")
+    y, m = int(now[:4]), int(now[5:7])
+    ym = (y, m)
+
+    # --- 月频节流：一个月只调仓一次 ---
+    if _G["ym"] == ym:
+        return
+    if not _G["first_done"]:
+        _G["first_done"] = True          # 首个 bar 跳过，避免热身数据不足
+        return
+
+    is_month_end = _last_day_of_month(ContextInfo, y, m)
+    if not is_month_end:
+        _G["pos_day"] += 1
+        if _G["pos_day"] < REBAL_DAYS:
+            return
+        print("[absmom] %s 非严格月末, 已等%d日 -> 强制调仓" % (now, _G["pos_day"]))
+
+    _G["ym"] = ym
+    _G["pos_day"] = 0
+
+    # --- 算信号 ---
+    held, w = signal_and_weights(ContextInfo)
+    print("[absmom] ===== %s 调仓: 持有 %d/%d 只 =====" % (now, len(held), len(POOL)))
+    if not held:
+        print("[absmom] 无标的站上200日线 -> 全部转现金")
+
+    # --- 取账户与行情，准备目标市值 ---
+    account_id = _G["account"] or _resolve_account(ContextInfo)
+    total, avail = get_total_asset(account_id)
+    holdings = get_holdings(account_id)
+
+    prices = {}
+    try:
+        tk = ContextInfo.get_full_tick(POOL)
+        for c in POOL:
+            if c in tk and float(tk[c].get("lastPrice", 0) or 0) > 0:
+                prices[c] = float(tk[c]["lastPrice"])
+    except Exception:
+        pass
+    if not prices:                        # 回测/非盘中：退回收盘价
+        for c in POOL:
+            prices[c] = float(ContextInfo.get_last_close(c) or 0)
+    if total <= 0:                        # 回测兜底：用策略设定的初始资金
+        total = float(getattr(ContextInfo, "capital", 0) or 0)
+        print("[absmom] 账户资产不可用, 回测模式用 capital=%.0f" % total)
+    investable = total * EXPOSURE
+
+    po = _passorder()
+    if po is None:
+        print("[absmom] 未找到 passorder(非QMT环境), 仅打印目标")
+        for c in held:
+            print("   目标 %s = %.0f 元 (%.1f%%)" % (c, investable * w[c], w[c] * 100))
+        return
+
+    quick = QT_NOW if not hasattr(ContextInfo, "is_last_bar") else QT_KLINE_END
+
+    # --- 先卖：不在持有子集的全部清掉 ---
+    for code in list(holdings.keys()):
+        if code in w:
+            continue
+        qty = int(holdings[code])
+        if qty <= 0:
+            continue
+        po(OP_SELL, ORDER_SHARES, account_id, code, PRICE_LAST, -1, qty,
+           "absmom清仓", quick, "absmom", ContextInfo)
+        print("[absmom]   SELL %s x%d" % (code, qty))
+
+    # --- 再买/调：目标市值 -> 整手 -> 与当前持仓求差 ---
+    for code in held:
+        px = prices.get(code, 0)
+        if px <= 0:
+            continue
+        target_val = investable * w[code]
+        target_sh = int(target_val / px / LOT) * LOT
+        cur = int(holdings.get(code, 0))
+        delta = target_sh - cur
+        if delta >= LOT:
+            po(OP_BUY, ORDER_SHARES, account_id, code, PRICE_LAST, -1, delta,
+               "absmom建仓", quick, "absmom", ContextInfo)
+            print("[absmom]   BUY  %s x%d (目标%.0f元, 现价%.3f)"
+                  % (code, delta, target_val, px))
+        elif delta <= -LOT:
+            po(OP_SELL, ORDER_SHARES, account_id, code, PRICE_LAST, -1, -delta,
+               "absmom减仓", quick, "absmom", ContextInfo)
+            print("[absmom]   SELL %s x%d (目标%.0f元)" % (code, -delta, target_val))
+
+
+def stop(ContextInfo):
+    print("[absmom] 策略停止")
