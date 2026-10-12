@@ -190,50 +190,75 @@ def init(ContextInfo):
     ContextInfo.set_commission(0, [COMM, COMM, COMM, COMM, 0, 5])
     _G["account"] = _resolve_account(ContextInfo)
     _G["ym"] = None            # 上次调仓的 (年, 月)
-    _G["pos_day"] = 0          # 本月已等待天数
+    _G["last_day"] = None      # 上一根 bar 的日期(用于识别月末)
     _G["first_done"] = False
     print("[absmom] init 完成; account=%s; pool=%d 只; EXPOSURE=%.2f"
           % (_G["account"], len(POOL), EXPOSURE))
     print("[absmom] 提示: 若 account 为空，请在【模型交易】里先绑定账号后重跑。")
 
 
-def _last_day_of_month(ContextInfo, y, m):
-    """判断当前 bar 是否为该月最后一个交易日。"""
-    ndays = ContextInfo.time_tick_size
-    d = ContextInfo.barpos
-    # 若下一根已超出本月 -> 当前就是月末
-    if d + 1 < ndays:
-        nxt = ContextInfo.get_bar_timetag(d + 1)
-        return timetag_to_datetime(nxt, "%Y-%m") != "%04d-%02d" % (y, m)
-    return True
+def _parse_date(s):
+    """把 %Y-%m-%d 字符串解析为 date, 失败返回 None。"""
+    try:
+        import datetime
+        return datetime.date(int(s[:4]), int(s[5:7]), int(s[8:10]))
+    except Exception:
+        return None
 
+def _detect_month_end(now):
+    """判断【上一根 bar】是否是上月最后一个交易日。
+
+    做法: 记住每个交易日见过的日期; 当今天日期的月份与上次不同,
+    说明上一次出现的那天就是上个月最后一个交易日 -> 今天(新月首日)可调仓。
+    这完全不依赖 QMT 的 barpos/time_tick_size, 也不依赖自然日/交易日差异,
+    是最可靠的月频判据。
+    """
+    last = _G.get("last_day")
+    _G["last_day"] = now
+    if last is None:
+        return False
+    return (last.year, last.month) != (now.year, now.month)
 
 def handlebar(ContextInfo):
-    # 关键: 回测时历史 K 线也会触发 handlebar，必须跳过，否则疯狂废单
-    if hasattr(ContextInfo, "is_last_bar") and not ContextInfo.is_last_bar():
+    # ★回测模式不能拦 is_last_bar: 回放每个历史 bar 时它都为 False,
+#   全拦掉会让策略完全不动(实测日志只有 init 没有调仓)。
+#   仅【模型交易】实盘/模拟才需要该守卫: 同一根 K 线内 tick 会反复触发。
+    in_bt = bool(getattr(ContextInfo, "do_back_test", False))
+    if not in_bt and hasattr(ContextInfo, "is_last_bar") and not ContextInfo.is_last_bar():
         return
+
+    # 诊断: 回测下每根 bar 都在跑, 打印一次摸底信息(便于确认策略确实在运行)
+    if in_bt and not _G.get("bt_probe"):
+        _G["bt_probe"] = True
+        print("[absmom] 回测模式已启动, capital=%.0f, barpos=%d, 总bar数=%d"
+              % (float(getattr(ContextInfo, "capital", 0) or 0),
+                 ContextInfo.barpos, ContextInfo.time_tick_size))
 
     d = ContextInfo.barpos
     now = timetag_to_datetime(ContextInfo.get_bar_timetag(d), "%Y-%m-%d")
+    now_dt = _parse_date(now)
     y, m = int(now[:4]), int(now[5:7])
     ym = (y, m)
+
+    # 每根 bar 都计数, 便于确认 handlebar 在持续运行(排查"只有init没输出")
+    _G["bars"] = _G.get("bars", 0) + 1
+    if _G["bars"] % 250 == 0:
+        print("[absmom] ... 已处理 %d 根 bar, 当前 %s" % (_G["bars"], now))
 
     # --- 月频节流：一个月只调仓一次 ---
     if _G["ym"] == ym:
         return
     if not _G["first_done"]:
-        _G["first_done"] = True          # 首个 bar 跳过，避免热身数据不足
+        _G["first_done"] = True          # 标记已热身(但不跳过: 由月末判定自然决定)
+        print("[absmom] 预热首根 bar(%s)" % now)
+
+
+    # 月频调仓判据: 上一根 bar 是上月最后一个交易日 -> 今天(新月首个交易日)调仓。
+    # 这样天然落在月末/月初交界, 信号用上月末收盘(与研究端口径一致), 无前视。
+    if not _detect_month_end(now_dt):
         return
 
-    is_month_end = _last_day_of_month(ContextInfo, y, m)
-    if not is_month_end:
-        _G["pos_day"] += 1
-        if _G["pos_day"] < REBAL_DAYS:
-            return
-        print("[absmom] %s 非严格月末, 已等%d日 -> 强制调仓" % (now, _G["pos_day"]))
-
     _G["ym"] = ym
-    _G["pos_day"] = 0
 
     # --- 算信号 ---
     held, w = signal_and_weights(ContextInfo)
