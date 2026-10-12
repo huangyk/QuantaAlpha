@@ -31,4 +31,10 @@ border-radius:8px;padding:10px 12px;font-size:13px;margin-top:16px;line-height:1
 <tr><td>1.2x</td><td>10.6%</td><td>0.92</td><td>-11.3%</td><td>11.6%</td></tr>
 <tr><td>1.3x</td><td>10.9%</td><td>0.87</td><td>-12.3%</td><td>12.5%</td></tr>
 <tr><td>1.5x</td><td>11.5%</td><td>0.80</td><td>-14.2%</td><td>14.5%</td></tr>
-</tbody></table><p class="sub">杠杆对这套低收益/常防御的策略几乎无效：1.3x 仅把年化从 10.0% 抬到 10.9%，夏普反降（融资利息拖累 + 空仓期仍付杠杆息）。<b>想多赚应加 H1 卫星仓，而非加杠杆。</b></p></div></body></html>
+</tbody></table><p class="sub">杠杆对这套低收益/常防御的策略几乎无效：1.3x 仅把年化从 10.0% 抬到 10.9%，夏普反降（融资利息拖累 + 空仓期仍付杠杆息）。<b>想多赚应加 H1 卫星仓，而非加杠杆。</b></p><h2 style="font-size:15px;margin:22px 0 6px">进阶：波动率目标化 (vol targeting，执行层 L4)</h2><p class="sub">把组合年化波动钉在 10%：低波动期加仓(≤1.5x)、高波动期自动降仓转现金。合法风控，非因子过拟合。</p><table><thead><tr><th>混合(H1%)+vol目标</th><th>年化</th><th>Sharpe</th><th>回撤</th><th>波动</th><th>均杠杆</th></tr></thead><tbody><tr><td>0%</td><td>8.3%</td><td>0.83</td><td>-9.9%</td><td>10.1%</td><td>1.14x</td></tr>
+<tr><td>25%</td><td>8.6%</td><td>0.84</td><td>-10.3%</td><td>10.3%</td><td>1.05x</td></tr>
+<tr><td>50%</td><td>8.9%</td><td>0.85</td><td>-10.7%</td><td>10.4%</td><td>0.97x</td></tr>
+</tbody></table><p class="sub">walk-forward OOS(底盘+vol目标)：训练 Sharpe 0.66/年化 6.3% → 测试 Sharpe 1.05/年化 10.1%/回撤 -10.5%。参数固定未选参，样本外仍稳定。</p><h2 style="font-size:15px;margin:22px 0 6px">块 Bootstrap 显著性 (21日块重采样 1000 次，90% 置信区间)</h2><p class="sub">年化 CI 下限&gt;0 即"稳定赚"统计显著、非运气。</p><table><thead><tr><th>混合(H1%)</th><th>年化90%CI</th><th>均值</th><th>Sharpe90%CI</th><th>回撤90%CI</th></tr></thead><tbody><tr><td>0%</td><td>[+4.4%, +16.0%]</td><td>+10.0%</td><td>[0.45, 1.65]</td><td>[-20.0%, -8.3%]</td></tr>
+<tr><td>25%</td><td>[+3.7%, +17.4%]</td><td>+10.6%</td><td>[0.34, 1.61]</td><td>[-26.0%, -9.6%]</td></tr>
+<tr><td>50%</td><td>[+3.3%, +18.8%]</td><td>+11.1%</td><td>[0.27, 1.56]</td><td>[-30.1%, -10.1%]</td></tr>
+</tbody></table></div></body></html>

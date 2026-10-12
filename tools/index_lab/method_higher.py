@@ -417,3 +417,86 @@ def leverage_scenario(codes_all, start="2019-01-01", end="2026-09-30",
         m = metrics(lev_ret)
         rows.append(dict(L=L, ann=m["ann"], sharpe=m["sharpe"], mdd=m["mdd"], vol=m["vol"]))
     return dict(financing=financing, blend=blend, rows=rows)
+
+
+def vol_target_blend(codes_all, start="2019-01-01", end="2026-09-30", blend=0.0,
+                     target_vol=0.10, vol_win=60, max_lev=1.5, financing=0.06,
+                     signal="sma200", weight="inv_vol", sma_w=200, clean_only=True):
+    """进阶：在混合策略上叠加波动率目标化(执行层 L4, 合法风控非因子过拟合)。
+
+    机制：用 vol_win(60) 日滚动波动估组合年化波动，日杠杆 = min(target_vol/滚动波动, max_lev)；
+    用**前一日**波动估计(无前视)，高波动期自动降仓(转现金)、低波动期加仓(≤max_lev)。
+    仅对杠杆部分(lev>1)计融资利息。返回 dict(nav, ann, vol, sharpe, mdd, avg_lev)。
+    """
+    if blend <= 0:
+        nav0 = abs_momentum_etf(codes_all, start, end, signal=signal,
+                                weight=weight, sma_w=sma_w)["nav"]
+    else:
+        hb = [c for c in codes_all if not is_bond_cash(c)]
+        nav0 = blend_absmomentum(codes_all, start, end, blend,
+                                 signal=signal, weight=weight, sma_w=sma_w)["nav"]
+    ret = nav0.pct_change().dropna()
+    roll = ret.rolling(vol_win).std() * np.sqrt(252)
+    lev = (target_vol / roll).clip(upper=max_lev).shift(1).fillna(1.0)  # 前一日估计, 避免前视
+    fin_drag = (lev - 1.0).clip(lower=0.0) * financing / 252.0
+    lev_ret = lev * ret - fin_drag
+    nav = (1 + lev_ret).cumprod()
+    m = metrics(lev_ret.dropna())
+    m["nav"] = nav
+    m["avg_lev"] = float(lev.mean())
+    return m
+
+
+def vol_target_walk_forward(codes_all, blend=0.0, target_vol=0.10, vol_win=60,
+                            max_lev=1.5, financing=0.06,
+                            train_win=("2019-01-01", "2022-12-31"),
+                            test_win=("2023-01-01", "2026-09-30"), clean_only=True):
+    """vol targeting 的 walk-forward OOS：参数(target_vol/vol_win/max_lev)全程固定、未选参，
+    直接切训练/测试窗验证样本外是否仍稳定。返回 dict(blends?, train, test)。"""
+    def run(win):
+        if blend <= 0:
+            nav0 = abs_momentum_etf(codes_all, win[0], win[1], signal="sma200",
+                                    weight="inv_vol")["nav"]
+        else:
+            hb = [c for c in codes_all if not is_bond_cash(c)]
+            nav0 = blend_absmomentum(codes_all, win[0], win[1], blend)["nav"]
+        ret = nav0.pct_change().dropna()
+        roll = ret.rolling(vol_win).std() * np.sqrt(252)
+        lev = (target_vol / roll).clip(upper=max_lev).shift(1).fillna(1.0)
+        lev_ret = lev * ret - (lev - 1.0).clip(lower=0.0) * financing / 252.0
+        return metrics(lev_ret.dropna())
+    tr = run(train_win); te = run(test_win)
+    return dict(blend=blend, target_vol=target_vol, max_lev=max_lev,
+                train=dict(ann=tr["ann"], sharpe=tr["sharpe"], mdd=tr["mdd"], vol=tr["vol"]),
+                test=dict(ann=te["ann"], sharpe=te["sharpe"], mdd=te["mdd"], vol=te["vol"]))
+
+
+def bootstrap_blend(codes_all, start="2019-01-01", end="2026-09-30", blend=0.0,
+                    n=1000, block=21, seed=20261012, signal="sma200", weight="inv_vol",
+                    sma_w=200, clean_only=True):
+    """块 Bootstrap 显著性检验：把日收益按 block(21日=1月) 整块重采样 n 次，重算年化/夏普/回撤，
+    得 5%/95% 置信区间。若年化 CI 下限仍>0，说明"稳定赚"非运气(统计显著)。
+    块采样保留收益自相关，比普通 bootstrap 更贴近真实时序。
+    """
+    if blend <= 0:
+        nav0 = abs_momentum_etf(codes_all, start, end, signal=signal,
+                                weight=weight, sma_w=sma_w)["nav"]
+    else:
+        hb = [c for c in codes_all if not is_bond_cash(c)]
+        nav0 = blend_absmomentum(codes_all, start, end, blend,
+                                 signal=signal, weight=weight, sma_w=sma_w)["nav"]
+    ret = nav0.pct_change().dropna().values
+    rng = np.random.default_rng(seed)
+    nb = max(1, len(ret) // block)
+    ann_l, sh_l, mdd_l = [], [], []
+    for _ in range(n):
+        idx = rng.integers(0, nb, size=nb)
+        sample = np.concatenate([ret[i * block:(i + 1) * block] for i in idx])[:len(ret)]
+        m = metrics(sample)
+        ann_l.append(m["ann"]); sh_l.append(m["sharpe"]); mdd_l.append(m["mdd"])
+    ann_l = np.array(ann_l); sh_l = np.array(sh_l); mdd_l = np.array(mdd_l)
+    return dict(n=n, block=block,
+                ann_ci=(float(np.percentile(ann_l, 5)), float(np.percentile(ann_l, 95))),
+                sharpe_ci=(float(np.percentile(sh_l, 5)), float(np.percentile(sh_l, 95))),
+                mdd_ci=(float(np.percentile(mdd_l, 5)), float(np.percentile(mdd_l, 95))),
+                ann_mean=float(ann_l.mean()), sharpe_mean=float(sh_l.mean()))

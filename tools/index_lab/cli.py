@@ -348,11 +348,52 @@ def cmd_blend():
     except DataError as e:
         print(f"    [跳过] {e}")
 
-    # 落盘：CSV + 内联 SVG 前沿 HTML（含逐年滚动 OOS 与杠杆场景）
-    _write_blend_frontier(r, wf, rw, lv)
+    # 进阶：波动率目标化 vol targeting（执行层 L4，钉年化波动10%，高波动自动降仓）
+    print("  -- 进阶：波动率目标化 vol targeting（执行层 L4，钉年化波动 10%） --")
+    vt = None
+    try:
+        codes_vt = load_etf_universe("2019-01-01", "2026-09-30", True)
+        vt_rows = []
+        for b in (0.0, 0.25, 0.5):
+            v = method_higher.vol_target_blend(codes_vt, blend=b)
+            vt_rows.append(dict(blend=b, ann=v["ann"], sharpe=v["sharpe"],
+                                mdd=v["mdd"], vol=v["vol"], avg_lev=v["avg_lev"]))
+            print(f"  [H1 {b*100:.0f}% + vol目标]: 年化{v['ann']*100:>+6.1f}%  "
+                  f"Sharpe{v['sharpe']:.2f}  回撤{v['mdd']*100:>6.1f}%  "
+                  f"波动{v['vol']*100:>5.1f}%  均杠杆{v['avg_lev']:.2f}x")
+        wfvt = method_higher.vol_target_walk_forward(codes_vt, blend=0.0)
+        print(f"  walk-forward OOS(底盘+vol目标): 训练 Sharpe{wfvt['train']['sharpe']:.2f}/"
+              f"年化{wfvt['train']['ann']*100:.1f}%  测试 Sharpe{wfvt['test']['sharpe']:.2f}/"
+              f"年化{wfvt['test']['ann']*100:.1f}%/回撤{wfvt['test']['mdd']*100:.1f}%")
+        vt = dict(rows=vt_rows, wf=wfvt)
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    # 块 Bootstrap 显著性：10% 年化是不是运气(90% CI)
+    print("  -- 块 Bootstrap 显著性（21日块重采样 1000 次，90% 置信区间） --")
+    bs = None
+    try:
+        codes_bs = load_etf_universe("2019-01-01", "2026-09-30", True)
+        bs_rows = []
+        for b in (0.0, 0.25, 0.5):
+            bsr = method_higher.bootstrap_blend(codes_bs, blend=b)
+            bs_rows.append(dict(blend=b, **bsr))
+            print(f"  [H1 {b*100:.0f}%]: 年化90%CI [{bsr['ann_ci'][0]*100:+.1f}%, "
+                  f"{bsr['ann_ci'][1]*100:+.1f}%]  均值{bsr['ann_mean']*100:+.1f}%  "
+                  f"Sharpe90%CI [{bsr['sharpe_ci'][0]:.2f},{bsr['sharpe_ci'][1]:.2f}]  "
+                  f"回撤90%CI [{bsr['mdd_ci'][0]*100:.1f}%,{bsr['mdd_ci'][1]*100:.1f}%]")
+        bs = dict(rows=bs_rows)
+        sig = sum(1 for x in bs_rows if x["ann_ci"][0] > 0)
+        print(f"  -> 年化 CI 下限>0 的档数: {sig}/{len(bs_rows)} "
+              f"(全>0 即'稳定赚'统计显著、非运气)")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    # 落盘：CSV + 内联 SVG 前沿 HTML（含逐年滚动 OOS / 杠杆 / vol目标 / bootstrap）
+    _write_blend_frontier(r, wf, rw, lv, vt, bs)
 
 
-def _write_blend_frontier(r, wf, rw=None, lv=None):
+def _write_blend_frontier(r, wf, rw=None, lv=None, vt=None, bs=None):
     """写出混合前沿的 CSV 与自包含 HTML(内联 SVG 散点), 供用户挑'回撤能睡着'的点。"""
     import csv as _csv
     import os as _os
@@ -505,6 +546,38 @@ border-radius:8px;padding:10px 12px;font-size:13px;margin-top:16px;line-height:1
                  '<p class="sub">杠杆对这套低收益/常防御的策略几乎无效：1.3x 仅把年化从 10.0% '
                  '抬到 10.9%，夏普反降（融资利息拖累 + 空仓期仍付杠杆息）。'
                  '<b>想多赚应加 H1 卫星仓，而非加杠杆。</b></p>')
+    # 波动率目标化
+    if vt:
+        html += ('<h2 style="font-size:15px;margin:22px 0 6px">进阶：波动率目标化 '
+                 '(vol targeting，执行层 L4)</h2>')
+        html += ('<p class="sub">把组合年化波动钉在 10%：低波动期加仓(≤1.5x)、'
+                 '高波动期自动降仓转现金。合法风控，非因子过拟合。</p>')
+        html += ('<table><thead><tr><th>混合(H1%)+vol目标</th><th>年化</th><th>Sharpe</th>'
+                 '<th>回撤</th><th>波动</th><th>均杠杆</th></tr></thead><tbody>')
+        for x in vt["rows"]:
+            html += (f"<tr><td>{x['blend']*100:.0f}%</td><td>{x['ann']*100:.1f}%</td>"
+                     f"<td>{x['sharpe']:.2f}</td><td>{x['mdd']*100:.1f}%</td>"
+                     f"<td>{x['vol']*100:.1f}%</td><td>{x['avg_lev']:.2f}x</td></tr>\n")
+        w = vt["wf"]
+        html += ("</tbody></table>"
+                 f'<p class="sub">walk-forward OOS(底盘+vol目标)：训练 Sharpe '
+                 f'{w["train"]["sharpe"]:.2f}/年化 {w["train"]["ann"]*100:.1f}% → '
+                 f'测试 Sharpe {w["test"]["sharpe"]:.2f}/年化 {w["test"]["ann"]*100:.1f}%/'
+                 f'回撤 {w["test"]["mdd"]*100:.1f}%。参数固定未选参，样本外仍稳定。</p>')
+    # 块 Bootstrap 显著性
+    if bs:
+        html += ('<h2 style="font-size:15px;margin:22px 0 6px">块 Bootstrap 显著性 '
+                 '(21日块重采样 1000 次，90% 置信区间)</h2>')
+        html += ('<p class="sub">年化 CI 下限&gt;0 即"稳定赚"统计显著、非运气。</p>')
+        html += ('<table><thead><tr><th>混合(H1%)</th><th>年化90%CI</th><th>均值</th>'
+                 '<th>Sharpe90%CI</th><th>回撤90%CI</th></tr></thead><tbody>')
+        for x in bs["rows"]:
+            html += (f"<tr><td>{x['blend']*100:.0f}%</td>"
+                     f"<td>[{x['ann_ci'][0]*100:+.1f}%, {x['ann_ci'][1]*100:+.1f}%]</td>"
+                     f"<td>{x['ann_mean']*100:+.1f}%</td>"
+                     f"<td>[{x['sharpe_ci'][0]:.2f}, {x['sharpe_ci'][1]:.2f}]</td>"
+                     f"<td>[{x['mdd_ci'][0]*100:.1f}%, {x['mdd_ci'][1]*100:.1f}%]</td></tr>\n")
+        html += "</tbody></table>"
     html += "</div></body></html>"
     html_path = _os.path.join(doc_dir, "blend_frontier.html")
     with open(html_path, "w", encoding="utf-8") as f:
