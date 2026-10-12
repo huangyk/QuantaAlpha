@@ -347,3 +347,73 @@ def walk_forward_blend(start_all="2019-01-01", end="2026-09-30",
         rows_te.append(dict(blend=b, ann=me["ann"], sharpe=me["sharpe"], mdd=me["mdd"]))
     return dict(blends=blends, train_win=train_win, test_win=test_win,
                 train=rows_tr, test=rows_te)
+
+
+def rolling_walk_forward_blend(blends=(0.0, 0.25, 0.5, 1.0),
+                               start_all="2019-01-01", end="2026-09-30",
+                               first_test_year=2022, clean_only=True):
+    """逐年滚动 OOS：固定 blend(用户风险偏好, 非挖掘参数)下，把 2022~2026 每一年单独切成
+    样本外，看是否每年都赚钱。
+
+    关键：策略参数(sma200/inv_vol)全程固定、从未在任何数据上选参 -> 对完整回测 NAV 按年
+    切分日收益即诚实 OOS（无前视、无重选参）。2026 仅至 9/30 为部分年(年化仅供参考)。
+    返回 dict：per_year[blend]=逐年明细, oos[blend]=全样本外合并指标。
+    """
+    codes = load_etf_universe(start_all, end, clean_only)
+    hb = [c for c in codes if not is_bond_cash(c)]
+    base_full = abs_momentum_etf(codes, start_all, end, signal="sma200",
+                                 weight="inv_vol")["nav"]
+    h1_full = highbeta_abs_momentum(hb, start_all, end, signal="sma200",
+                                    weight="inv_vol")["nav"]
+    rb = base_full.pct_change().dropna()
+    rh = h1_full.pct_change().dropna()
+    common = rb.index.intersection(rh.index)
+    rb = rb.loc[common]; rh = rh.loc[common]
+    end_year = pd.Timestamp(end).year
+    per_year = {b: [] for b in blends}
+    oos_ret = {b: [] for b in blends}
+    for Y in range(first_test_year, end_year + 1):
+        ystart = f"{Y}-01-01"
+        yend = end if Y == end_year else f"{Y}-12-31"
+        mask = (rb.index >= ystart) & (rb.index <= yend)
+        if mask.sum() < 20:
+            continue
+        for b in blends:
+            br = (1.0 - b) * rb[mask] + b * rh[mask]
+            m = metrics(br)
+            per_year[b].append(dict(year=Y, partial=(Y == end_year),
+                                    ann=m["ann"], sharpe=m["sharpe"], mdd=m["mdd"],
+                                    ret=float((1 + br).prod() - 1)))
+            oos_ret[b].append(br.values)
+    oos = {}
+    for b in blends:
+        allr = np.concatenate(oos_ret[b]) if oos_ret[b] else np.array([])
+        oos[b] = metrics(allr) if len(allr) else dict(ann=0.0, sharpe=0.0, mdd=0.0)
+    return dict(blends=blends, first_test_year=first_test_year, end_year=end_year,
+                per_year=per_year, oos=oos)
+
+
+def leverage_scenario(codes_all, start="2019-01-01", end="2026-09-30",
+                      leverages=(1.0, 1.2, 1.3, 1.5), financing=0.06,
+                      signal="sma200", weight="inv_vol", blend=0.0, sma_w=200,
+                      clean_only=True):
+    """在低回撤底盘上施加适度杠杆(执行层 L4 杠杆, 非 L2 因子过拟合)，看收益/回撤/夏普。
+
+    杠杆模型：日收益 = L*策略日收益 - (L-1)*融资利率/252（借入部分按日付息）。
+    真实约束(融资利率5~8%、维持担保比例、券商额度、防御期空仓仍付杠杆利息)未建模，
+    此处融资利率取 6% 中值仅作上限示意。blend>0 时先混 H1 再杠杆。
+    """
+    if blend <= 0:
+        nav = abs_momentum_etf(codes_all, start, end, signal=signal,
+                               weight=weight, sma_w=sma_w)["nav"]
+    else:
+        hb = [c for c in codes_all if not is_bond_cash(c)]
+        nav = blend_absmomentum(codes_all, start, end, blend,
+                                signal=signal, weight=weight, sma_w=sma_w)["nav"]
+    ret = nav.pct_change().dropna()
+    rows = []
+    for L in leverages:
+        lev_ret = L * ret - (L - 1) * financing / 252.0
+        m = metrics(lev_ret)
+        rows.append(dict(L=L, ann=m["ann"], sharpe=m["sharpe"], mdd=m["mdd"], vol=m["vol"]))
+    return dict(financing=financing, blend=blend, rows=rows)

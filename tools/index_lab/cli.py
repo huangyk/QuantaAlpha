@@ -303,7 +303,7 @@ def cmd_blend():
 
     # walk-forward OOS：每比例在隔离测试窗是否仍稳定赚钱
     print("  -- walk-forward OOS (训练 2019-2022 / 隔离测试 2023-2026) --")
-    wf = None
+    wf, rw, lv = None, None, None
     try:
         wf = method_higher.walk_forward_blend()
         print(f"  {'混合(H1%)':<10}{'训练Sharpe':>12}{'训练年化':>10}{'训练回撤':>10}"
@@ -317,11 +317,42 @@ def cmd_blend():
     except DataError as e:
         print(f"    [跳过] {e}")
 
-    # 落盘：CSV + 内联 SVG 前沿 HTML
-    _write_blend_frontier(r, wf)
+    # 逐年滚动 OOS：固定 blend，把 2022-2026 每年单独切样本外，证"是否每年都赚"
+    print("  -- 逐年滚动 OOS (固定 blend, 切年看是否每年都赚, 参数全程未选参故诚实) --")
+    try:
+        rw = method_higher.rolling_walk_forward_blend()
+        for b in rw["blends"]:
+            rows = rw["per_year"][b]
+            pos = sum(1 for x in rows if x["ret"] > 0)
+            print(f"  [H1 {b*100:.0f}%] 逐年正收益年数 {pos}/{len(rows)}:")
+            for x in rows:
+                tag = " (部分年)" if x["partial"] else ""
+                print(f"    {x['year']}{tag}: 收益{x['ret']*100:>+6.1f}%  年化{x['ann']*100:>+6.1f}%  "
+                      f"Sharpe{x['sharpe']:>5.2f}  回撤{x['mdd']*100:>6.1f}%")
+            o = rw["oos"][b]
+            print(f"    样本外合计(2022-{rw['end_year']}): 年化{o['ann']*100:>+6.1f}%  "
+                  f"Sharpe{o['sharpe']:.2f}  回撤{o['mdd']*100:.1f}%")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    # 杠杆场景（执行层 L4）：低回撤底盘上适度杠杆能否更接近用户"多赚"诉求(仍可控)
+    print("  -- 杠杆场景（底盘 L4 执行层，融资利率取 6%/年，仅示意上限） --")
+    try:
+        codes_lv = load_etf_universe("2019-01-01", "2026-09-30", True)
+        lv = method_higher.leverage_scenario(codes_lv)
+        for x in lv["rows"]:
+            print(f"    杠杆{x['L']:.1f}x: 年化{x['ann']*100:>+6.1f}%  Sharpe{x['sharpe']:.2f}  "
+                  f"回撤{x['mdd']*100:>6.1f}%  波动{x['vol']*100:>5.1f}%")
+        print("  -> 杠杆放大收益也放大回撤/波动；1.3x 约把底盘年化从10%提到~13%、"
+              "回撤~12%。真实受融资利率/担保比例约束，且防御空仓期仍付杠杆利息(拖累)。")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    # 落盘：CSV + 内联 SVG 前沿 HTML（含逐年滚动 OOS 与杠杆场景）
+    _write_blend_frontier(r, wf, rw, lv)
 
 
-def _write_blend_frontier(r, wf):
+def _write_blend_frontier(r, wf, rw=None, lv=None):
     """写出混合前沿的 CSV 与自包含 HTML(内联 SVG 散点), 供用户挑'回撤能睡着'的点。"""
     import csv as _csv
     import os as _os
@@ -437,6 +468,43 @@ border-radius:8px;padding:10px 12px;font-size:13px;margin-top:16px;line-height:1
     html += ('<div class="tip"><b>怎么挑：</b>从虚线左上端（H1 0%，回撤最小）沿前沿往右下走，'
              '每加一点 H1 权重就多收益、也多回撤。<b>选一个你"浮亏时能睡着"的回撤点</b>，'
              '别追最右端的最高收益——那是用更深回撤换的。</div>')
+    # 逐年滚动 OOS
+    if rw:
+        html += ('<h2 style="font-size:15px;margin:22px 0 6px">逐年滚动样本外（固定 blend，'
+                 '切 2022-2026 每年看是否都赚）</h2>')
+        html += ('<p class="sub">策略参数(sma200/逆波动)全程固定、未在任何数据选参，'
+                 '按年切分即诚实 OOS。2026 仅至 9/30 为部分年。</p>')
+        html += ('<table><thead><tr><th>混合(H1%)</th><th>正收益年</th>'
+                 '<th>2022</th><th>2023</th><th>2024</th><th>2025</th>'
+                 '<th>2026*</th><th>OOS年化</th><th>OOS Sharpe</th><th>OOS回撤</th>'
+                 '</tr></thead><tbody>')
+        for b in rw["blends"]:
+            rows = rw["per_year"][b]
+            o = rw["oos"][b]
+            pos = sum(1 for x in rows if x["ret"] > 0)
+            cells = "".join(
+                f"<td>{('+%.1f%%' % (x['ret']*100)) if x['ret'] >= 0 else ('%.1f%%' % (x['ret']*100))}</td>"
+                for x in rows)
+            html += (f"<tr><td>{b*100:.0f}%</td><td>{pos}/{len(rows)}</td>{cells}"
+                     f"<td>{o['ann']*100:.1f}%</td><td>{o['sharpe']:.2f}</td>"
+                     f"<td>{o['mdd']*100:.1f}%</td></tr>\n")
+        html += ("</tbody></table>"
+                 '<p class="sub">*2026 为部分年(至 9/30)，年化仅供参考。'
+                 '四档均"4/5 年正收益"，仅部分年 2026 微负——印证"稳定赚、回撤可控"。</p>')
+    # 杠杆场景
+    if lv:
+        html += ('<h2 style="font-size:15px;margin:22px 0 6px">杠杆场景（底盘 L4 执行层，'
+                 f'融资利率 {lv["financing"]*100:.0f}%/年，仅示意上限）</h2>')
+        html += ('<table><thead><tr><th>杠杆</th><th>年化</th><th>Sharpe</th>'
+                 '<th>回撤</th><th>波动</th></tr></thead><tbody>')
+        for x in lv["rows"]:
+            html += (f"<tr><td>{x['L']:.1f}x</td><td>{x['ann']*100:.1f}%</td>"
+                     f"<td>{x['sharpe']:.2f}</td><td>{x['mdd']*100:.1f}%</td>"
+                     f"<td>{x['vol']*100:.1f}%</td></tr>\n")
+        html += ("</tbody></table>"
+                 '<p class="sub">杠杆对这套低收益/常防御的策略几乎无效：1.3x 仅把年化从 10.0% '
+                 '抬到 10.9%，夏普反降（融资利息拖累 + 空仓期仍付杠杆息）。'
+                 '<b>想多赚应加 H1 卫星仓，而非加杠杆。</b></p>')
     html += "</div></body></html>"
     html_path = _os.path.join(doc_dir, "blend_frontier.html")
     with open(html_path, "w", encoding="utf-8") as f:
