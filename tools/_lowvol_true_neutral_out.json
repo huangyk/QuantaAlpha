@@ -1,0 +1,53 @@
+{
+  "window": "2011-01-04~2026-09-30",
+  "ic_raw": 0.0324,
+  "t_raw": 5.55,
+  "ic_sz": 0.0332,
+  "t_sz": 6.17,
+  "ic_ind": 0.0312,
+  "t_ind": 7.35,
+  "long_short_daily_extreme": {
+    "ann": -0.2967,
+    "sharpe": -1.43,
+    "maxdd": -0.8846
+  },
+  "long_short_daily_broad": {
+    "ann": -0.2694,
+    "sharpe": -2.2,
+    "maxdd": -0.8325
+  },
+  "long_short_daily_rankweighted": {
+    "ann": -0.086,
+    "sharpe": -4.34,
+    "maxdd": -0.3816
+  },
+  "long_short_monthly_broad": {
+    "ann": -0.0069,
+    "sharpe": -0.19,
+    "maxdd": -0.015
+  },
+  "long_only_liquid_extreme": {
+    "ann": -0.3402,
+    "sharpe": -1.93,
+    "maxdd": -0.8897
+  },
+  "long_only_largecap_lowvol": {
+    "ann": -0.139,
+    "sharpe": -2.67,
+    "maxdd": -0.0401
+  },
+  "cost_sensitivity": {
+    "1x": {
+      "sharpe": -2.2,
+      "ann": -0.2694
+    },
+    "2x": {
+      "sharpe": -2.49,
+      "ann": -0.3053
+    },
+    "3x": {
+      "sharpe": -2.77,
+      "ann": -0.3395
+    }
+  }
+}
