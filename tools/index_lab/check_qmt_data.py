@@ -98,13 +98,45 @@ def main():
     print()
     print("=" * 74)
     if bad:
-        print("有问题 %d / %d 只：" % (len(bad), len(pool)))
-        for c, ns, v in bad:
-            print("  %-12s %s" % (c, v))
-        print()
-        print("处理办法：QMT【行情】→【历史数据下载】→ 选这些 ETF → 日线 → 补足到 %d 行以上"
-              % args.min_rows)
-        print("若下载后仍不足，说明该 QMT 服务器未提供更早数据（需切到带「迅投」字样的服务器）。")
+        # 只列真正会让 200日均线失效的（不足 min_rows），
+        # 「mini 偏少但已过线」的另作提示，避免用户做无用功
+        must = [b for b in bad if b[2] != "OK" and b[1]["mini(实际读取)"] is not None
+                and b[1]["mini(实际读取)"] < args.min_rows]
+        soft = [b for b in bad if b not in must]
+
+        if must:
+            print("【必须补】%d 只历史不足 %d 行 -> 200日均线算不出，信号会失真"
+                  % (len(must), args.min_rows))
+            print()
+            print("%-12s %-9s %-12s %-12s %s"
+                  % ("代码", "当前行数", "当前起始", "建议下载起始", "主目录可参考"))
+            print("-" * 74)
+            for c, ns, v in must:
+                nb = ns["mini(实际读取)"]
+                _, dmini = rows_of(DATADIRS[1][1], c)
+                na, dmain = rows_of(DATADIRS[0][1], c)
+                # 260 个交易日 ≈ 380 自然日，往前留足
+                sug = (dmini - datetime.timedelta(days=380)) if dmini else "2019-01-01"
+                print("%-12s %-9d %-12s %-12s %s"
+                      % (c, nb or 0, dmini or "?", sug,
+                         ("%d行 %s" % (na, dmain)) if na else "无"))
+            print()
+            print("做法：QMT【行情】→【历史数据下载】→ 勾选上面 %d 只 → 日线" % len(must))
+            print("     → 起始日期填「建议下载起始」列（或统一填 2019-01-01 更省事）")
+            print("     → 勾「补充」/「全量」后开始下载")
+            print("若下载后仍不足：QMT 服务器未提供更早数据，需切到带「迅投」字样的行情服务器。")
+            print()
+
+        if soft:
+            print("【提示】另 %d 只虽已过线，但 QMT 实际读取的数据明显偏少：" % len(soft))
+            print("       （能跑，但历史窗口短，回测早期信号可能偏差）")
+            for c, ns, v in soft[:12]:
+                na = ns["datadir(主)"]
+                print("       %-12s QMT实际 %s行，主目录 %s行"
+                      % (c, ns["mini(实际读取)"], na))
+            if len(soft) > 12:
+                print("       ... 其余 %d 只略" % (len(soft) - 12))
+            print()
     else:
         print("全部 %d 只历史充足，可以正常回测。" % len(pool))
 
