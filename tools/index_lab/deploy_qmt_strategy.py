@@ -31,6 +31,46 @@ SRC = os.path.normpath(SRC)
 DST_NAME = "absmom_qmt_model.py"
 
 
+def _is_plain_python(path):
+    """判断文件是否为明文 Python（QMT 保存策略后会加密，此处用于诊断）。"""
+    try:
+        d = open(path, "rb").read(4096)
+    except OSError:
+        return None
+    return b"def init" in d or b"coding" in d[:80]
+
+
+def diagnose_qmt_scan():
+    """
+    诊断 QMT 是否可能识别部署的策略。
+
+    已核实的事实：QMT 保存策略时会**自动加密**写入 python 目录
+    （用户新建的策略文件是密文，官方示例才是明文），所以
+    「明文 .py 放进去」QMT 未必认 —— 唯一可靠路径是在 QMT 里新建策略并粘贴代码。
+
+    本函数只做**只读**观察，不修改任何文件。
+    """
+    dst = os.path.join(QMT_PY_DIR, DST_NAME)
+    print("-" * 62)
+    print("QMT 识别诊断")
+    if not os.path.exists(dst):
+        print("  [X] 尚未部署: %s" % DST_NAME)
+        return
+    plain = _is_plain_python(dst)
+    if plain:
+        print("  [!] 部署版为**明文**。QMT 自身保存的策略是密文,")
+        print("      因此 QMT 可能不列出它 -> 走【新建策略+粘贴代码】路线。")
+        print("      可粘贴源码: docs/absmom_qmt_paste.txt")
+    else:
+        print("  [OK] 部署版已是 QMT 认可的形态")
+
+    # 统计目录里明文 vs 密文，帮助判断本QMT 版本的行为
+    py = [f for f in os.listdir(QMT_PY_DIR) if f.endswith(".py")]
+    enc = [f for f in py if _is_plain_python(os.path.join(QMT_PY_DIR, f)) is False]
+    print("  目录内 .py 共 %d 个，其中密文 %d 个（QMT 保存的策略）" % (len(py), len(enc)))
+    print("  若重启 QMT 后仍看不到 %s -> 请用粘贴路线" % DST_NAME.replace(".py", ""))
+
+
 def check_env():
     """检查 QMT 目录与源码是否存在。"""
     ok = True
@@ -51,6 +91,7 @@ def check_env():
         print("  [OK] 源码存在 (%d bytes)" % os.path.getsize(SRC))
 
     print("QMT Python 版本: 3.6.8 (QMT 内置, 语法须兼容 py3.6)")
+    diagnose_qmt_scan()
     print("=" * 62)
     return ok
 
