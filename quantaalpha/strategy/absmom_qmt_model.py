@@ -191,6 +191,10 @@ def init(ContextInfo):
     _G["account"] = _resolve_account(ContextInfo)
     _G["ym"] = None            # 上次调仓的 (年, 月)
     _G["last_day"] = None      # 上一根 bar 的日期(用于识别月末)
+    # 自建持仓台账: 回测时 account 为空 -> get_trade_detail_data 查不到持仓,
+    # 若不记账就会「每次都当成空仓→ 只买不卖」, 资金被重复消耗直到归零。
+    _G["pos"] = {}              # {代码: 持仓股数}
+
     _G["first_done"] = False
     print("[absmom] init 完成; account=%s; pool=%d 只; EXPOSURE=%.2f"
           % (_G["account"], len(POOL), EXPOSURE))
@@ -269,7 +273,12 @@ def handlebar(ContextInfo):
     # --- 取账户与行情，准备目标市值 ---
     account_id = _G["account"] or _resolve_account(ContextInfo)
     total, avail = get_total_asset(account_id)
-    holdings = get_holdings(account_id)
+
+    # 回测: account 为空查不到真实持仓 -> 用自建台账(记录每次实际下单量)
+    if bool(getattr(ContextInfo, "do_back_test", False)):
+        holdings = dict(_G.get("pos") or {})
+    else:
+        holdings = get_holdings(account_id)
 
     prices = {}
     try:
@@ -317,6 +326,9 @@ def handlebar(ContextInfo):
 
     quick = QT_NOW if not hasattr(ContextInfo, "is_last_bar") else QT_KLINE_END
 
+    # 持仓台账引用(回测时 holdings 即来自它)
+    pos = _G.setdefault("pos", {})
+
     # --- 先卖：不在持有子集的全部清掉 ---
     for code in list(holdings.keys()):
         if code in w:
@@ -326,6 +338,7 @@ def handlebar(ContextInfo):
             continue
         po(OP_SELL, ORDER_SHARES, account_id, code, PRICE_LAST, -1, qty,
            "absmom清仓", quick, "absmom", ContextInfo)
+        pos[code] = 0                        # 同步台账
         print("[absmom]   SELL %s x%d" % (code, qty))
 
     # --- 再买/调：目标市值 -> 整手 -> 与当前持仓求差 ---
@@ -340,11 +353,13 @@ def handlebar(ContextInfo):
         if delta >= LOT:
             po(OP_BUY, ORDER_SHARES, account_id, code, PRICE_LAST, -1, delta,
                "absmom建仓", quick, "absmom", ContextInfo)
+            pos[code] = cur + delta           # 同步台账
             print("[absmom]   BUY  %s x%d (目标%.0f元, 现价%.3f)"
                   % (code, delta, target_val, px))
         elif delta <= -LOT:
             po(OP_SELL, ORDER_SHARES, account_id, code, PRICE_LAST, -1, -delta,
                "absmom减仓", quick, "absmom", ContextInfo)
+            pos[code] = cur + delta           # 同步台账
             print("[absmom]   SELL %s x%d (目标%.0f元)" % (code, -delta, target_val))
 
 
