@@ -1,8 +1,10 @@
-# QMT 导入与运行指引（.rzrk 限制的解决方案）
+# QMT 使用指引（粘贴代码路线）
 
-> **一句话结论：`.rzrk` 我造不出来（迅投强加密），但你手动粘贴一次代码，QMT 自己就能生成。**
-> 已验证：QMT 保存策略时会**自动加密**写入 `python/` 目录（你新建的 `新建策略文件1.py` 就是密文），
-> 所以「直接把 .py 丢进 python 目录」QMT **不认**——这是我上次判断错的地方。
+> **一句话结论：`.rzrk` 我造不出来（迅投强加密），你手动粘贴一次代码，QMT 自己就能生成。**
+> 已实测：QMT 保存策略时会**自动加密**写入 `python/` 目录（你 13:48 粘贴生成的
+> `修改版.py` 就是密文），所以「把 .py 丢进 python 目录」QMT **不认**——这条已放弃。
+>
+> **本项目只交付一份「可粘贴代码」文件，不再往QMT 目录里自动写文件。**
 
 ---
 
@@ -41,13 +43,20 @@ QMT 保存后的策略文件是**密文**（你那份是 `python/修改版.py`�
 |---|---|---|
 | `absmom_策略代码_可直接粘贴.txt`（QMT 目录） | **UTF-8 + BOM** | 给你看/复制用，编辑器打开**不乱码** |
 | `docs/absmom_qmt_paste.txt` | **UTF-8 + BOM** | 同上 |
-| `{QMT}/python/*.py` | GBK 或密文 | QMT 内部用的，**不需要你打开** |
-| `quantaalpha/strategy/absmom_qmt_model.py` | GBK | 项目源（给部署脚本用） |
+| `quantaalpha/strategy/absmom_qmt_model.py` | GBK | 项目源（脚本读它生成粘贴版） |
+| `{QMT}/python/*.py` | 密文 | QMT 自己加密的，**不需要你打开** |
 
 > 全字符均可转 GBK（已验证 0 失败），所以**粘贴进 QMT 不会有编码问题**。
 > 若 QMT 报 `SyntaxError: encoding problem`，把编辑器第一行确认成 `#coding:gbk` 再保存。
 
 拿到 .rzrk 备份：QMT 内右键策略 →「**导出公式**」。
+
+### 代码改了怎么重新生成粘贴版
+```bash
+cd D:\qqmt\QuantaAlpha
+python tools/index_lab/make_paste_code.py     # 重新生成两份粘贴文件
+```
+改的是项目源 `absmom_qmt_model.py`，然后重新粘贴进 QMT 覆盖原策略。
 
 ---
 
@@ -148,10 +157,12 @@ QMT 本机 `datadir` 里 38 只 ETF 有 **13 只历史不足 200 日**：
 
 ```bash
 cd D:\qqmt\QuantaAlpha
-python tools/index_lab/deploy_qmt_strategy.py --exposure 0.6   # 低回撤档
-python tools/index_lab/deploy_qmt_strategy.py --exposure 1.0   # 主用档(满仓)
+python tools/index_lab/make_paste_code.py --exposure 0.6   # 生成低回撤档粘贴代码
+python tools/index_lab/make_paste_code.py --exposure 1.0   # 生成主用档(满仓)
+python tools/index_lab/make_paste_code.py --check           # 只校验不写文件
 ```
-再把新代码粘贴进 QMT（或替换 `python/` 下对应文件）。
+
+生成新代码后，**重新粘贴进 QMT** 覆盖原来的策略即可。
 
 | 档位 | EXPOSURE | 年化 | 回撤 |
 |---|---|---|---|
