@@ -26,6 +26,7 @@ SMA_W = 200
 VOL_WINDOW = 60
 INV_VOL_FLOOR = 0.05
 COMM = 0.0001
+EXPOSURE = 1.0   # 风险暴露比例：1.0=满仓(底盘)；0.6=低回撤档。与 QMT 版一致。
 
 
 def initialize(context):
@@ -68,8 +69,9 @@ def handle_data(context, data):
     held, w = _signal(context)
     context.weights = w
     total = context.portfolio.total_value
+    investable = total * EXPOSURE
     for code in context.pool:
         if code in w:
-            order_target_value(code, total * w[code])
+            order_target_value(code, investable * w[code])
         else:
             order_target_value(code, 0)

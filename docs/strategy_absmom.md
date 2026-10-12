@@ -1,7 +1,8 @@
 # 战法：跨资产趋势跟随（200日SMA + 逆波动率）
 
-> 唯一经 QMT 实盘数据验证、可落地的指数/ETF 层策略。其余「关口支撑 / 抢反弹 / 顺趋势抄跌 / 单指数MA门控」均已证伪，详见 `docs/index_technical_verdict_report.html`。
-> 本文件为可部署规格：QMT 版 `quantaalpha/strategy/absmom_qmt.py`、Ptrade 版 `quantaalpha/strategy/absmom_ptrade.py` 逻辑完全一致。
+> **要直接上手用，照 `docs/ops_checklist.md` 做即可**（冻结配置 + 每月3步操作 + 上线前验证）。
+> 唯一经 QMT 实盘数据验证、可落地的指数/ETF 层策略。其余「关口支撑 / 抢反弹 / 顺趋势抄跌 / 单指数MA门控」均已证伪，详见 `docs/index_technical_verdict_report.html`；股票路线亦已证伪（`docs/stock_verdict.md`）。
+> 本文件为可部署规格：QMT 版 `quantaalpha/strategy/absmom_qmt.py`、Ptrade 版 `quantaalpha/strategy/absmom_ptrade.py` 逻辑完全一致（均含 `EXPOSURE` 暴露比例参数，1.0=满仓 / 0.6=低回撤档）。
 
 ## 1. 一句话
 对池里每只 ETF **独立**判趋势：收盘价站在自身 200 日移动平均线之上才持有，否则该份额转现金；持有子集内按**逆波动率**分配权重。每月调仓一次。

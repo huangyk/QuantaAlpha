@@ -35,6 +35,8 @@ SMA_W = 200
 VOL_WINDOW = 60
 INV_VOL_FLOOR = 0.05
 COMM = 0.0001
+EXPOSURE = 1.0   # 风险暴露比例：1.0=满仓(底盘)；0.6=低回撤档(60%暴露+40%现金)。
+                 # 改这一个数即可在"回撤减半(~-4.8%)、年化减半(~5.5%)"与"满仓"之间切换。
 
 
 def _closes(code, count):
@@ -91,9 +93,10 @@ def handlebar(ContextInfo):
     # 总资产（按你的 QMT 版本取账户总值，下面为通用写法）
     total = ContextInfo.portfolio.accounts["total_value"] \
         if hasattr(ContextInfo.portfolio, "accounts") else 0.0
+    investable = total * EXPOSURE   # 暴露比例：其余留现金
     for code in ContextInfo.pool:
         if code in w:
-            ContextInfo.order_target_value(code, total * w[code])
+            ContextInfo.order_target_value(code, investable * w[code])
         else:
             ContextInfo.order_target_value(code, 0)
 

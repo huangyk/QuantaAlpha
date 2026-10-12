@@ -1,12 +1,18 @@
-"""生成跨资产趋势跟随策略的下单清单（按 100 股取整，支持核心-卫星混合）。
+"""生成跨资产趋势跟随策略的下单清单（按 100 股取整，支持核心-卫星混合 + 暴露比例）。
 
 用法：
-  python -m tools.index_lab.make_order_list 80000          # 纯底盘(blend=0)
-  python -m tools.index_lab.make_order_list 80000 0.25     # 底盘75% + H1(高beta)25%
-  python -m tools.index_lab.make_order_list 80000 0.5      # 各半
+  python -m tools.index_lab.make_order_list 80000              # 纯底盘满仓(blend=0, exposure=1)
+  python -m tools.index_lab.make_order_list 80000 0.25         # 底盘75% + H1卫星25%
+  python -m tools.index_lab.make_order_list 80000 0 0.6        # 底盘满仓权重但只投60%(低回撤档)
 
-混合后按"合并权重"单次分配股数：blended_w_i = (1-blend)*底盘权重_i + blend*H1权重_i，
-避免分仓后再各自取整导致高单价债券被舍。输出 data/results/order_list_<资金>_b<H1%>.csv。
+参数：
+  argv[1] 资金(元)
+  argv[2] blend：H1高beta卫星比例 0~1（默认0）
+  argv[3] exposure：风险暴露比例 0~1（默认1.0；0.6=低回撤档，其余留现金）
+
+逻辑：混合后按"合并权重"单次分配股数 blended_w=(1-blend)*底盘权重+blend*H1权重，再乘 exposure。
+整手取整规则：目标金额 >= 半手就买至少1手（避免高单价标的因不足1手被整只丢弃导致仓位缺失）。
+输出 data/results/order_list_<资金>_b<H1%>_e<暴露%>.csv。
 """
 import os
 import sys
@@ -28,11 +34,20 @@ NAMES = {
 }
 
 
+def _lots_for(target, price):
+    """整手取整：目标>=半手则至少买1手，否则0（防止高单价标的被整只丢弃）。"""
+    lot = price * 100
+    if target >= 0.5 * lot:
+        return max(1, int(round(target / lot)))
+    return 0
+
+
 def main():
     cap = float(sys.argv[1]) if len(sys.argv) > 1 else 80000.0
     blend = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
-    if not (0.0 <= blend <= 1.0):
-        print(f"[错误] blend 须在 [0,1]，收到 {blend}", file=sys.stderr)
+    exposure = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
+    if not (0.0 <= blend <= 1.0 and 0.0 < exposure <= 1.0):
+        print(f"[错误] blend∈[0,1], exposure∈(0,1]，收到 blend={blend} exposure={exposure}", file=sys.stderr)
         sys.exit(2)
 
     codes = load_etf_universe("2019-01-01", "2026-09-30", True)
@@ -46,19 +61,18 @@ def main():
     for h in h1_sig["holdings"]:
         price.setdefault(h["code"], h["close"])
 
-    all_codes = sorted(set(base_w) | set(h1_w))
     rows = []
-    for code in all_codes:
-        bw = (1.0 - blend) * base_w.get(code, 0.0) + blend * h1_w.get(code, 0.0)
+    for code in sorted(set(base_w) | set(h1_w)):
+        bw = ((1.0 - blend) * base_w.get(code, 0.0) + blend * h1_w.get(code, 0.0)) * exposure
         if bw <= 0:
             continue
         close = price.get(code)
         if close is None or close != close or close <= 0:
-            rows.append([code, NAMES.get(code, ""), "CASH", "", 0.0, 0, 0, 0.0])
+            rows.append([code, NAMES.get(code, ""), "CASH", "", round(bw * 100, 2), 0, 0, 0.0])
             continue
         target = bw * cap
-        lots = round(target / (close * 100)) if target >= close * 100 else 0
-        shares = max(0, lots) * 100
+        lots = _lots_for(target, close)
+        shares = lots * 100
         amt = shares * close
         action = "BUY" if shares > 0 else "CASH"
         rows.append([code, NAMES.get(code, ""), action, round(close, 4),
@@ -70,12 +84,12 @@ def main():
     total = sum(r[7] for r in buys)
     left = cap - total
 
-    tag = f"_b{int(blend*100)}"
-    out = os.path.join(ROOT, "data", "results", f"order_list_{int(cap)}{tag}.csv")
+    out = os.path.join(ROOT, "data", "results",
+                       f"order_list_{int(cap)}_b{int(blend*100)}_e{int(exposure*100)}.csv")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w", newline="") as f:
+    with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["code", "name", "action", "price", "target_weight_pct",
+        w.writerow(["code", "name", "action", "price", "target_weight_pct_of_total",
                     "target_yuan", "shares", "amount"])
         for r in buys:
             w.writerow(r)
@@ -83,14 +97,14 @@ def main():
             w.writerow(r)
         w.writerow(["", "", "CASH_LEFT", "", "", round(left, 2), "", round(left, 2)])
 
-    print(f"资金 {cap:,.0f} | H1卫星 {blend*100:.0f}% | 买入 {len(buys)} 只 | "
-          f"占用 {total:,.2f} | 留现金 {left:,.2f}")
-    print(f"{'代码':<10}{'名称':<14}{'动作':<6}{'现价':>9}{'目标%':>8}{'目标元':>10}{'股数':>8}{'金额':>11}")
+    print(f"资金 {cap:,.0f} | H1卫星 {blend*100:.0f}% | 暴露 {exposure*100:.0f}% | "
+          f"买入 {len(buys)} 只 | 占用 {total:,.2f} | 留现金 {left:,.2f}")
+    print(f"{'代码':<10}{'名称':<14}{'动作':<6}{'现价':>9}{'占总%':>8}{'目标元':>10}{'股数':>8}{'金额':>11}")
     for r in buys:
-        print(f"{r[0]:<10}{r[1]:<14}{r[2]:<6}{r[3]:>9}{r[4]:>7.1f}%{r[5]:>10,.0f}{r[6]:>8}{r[7]:>11,.2f}")
+        print(f"{r[0]:<10}{r[1]:<14}{r[2]:<6}{r[3]:>9}{r[4]:>7.2f}%{r[5]:>10,.0f}{r[6]:>8}{r[7]:>11,.2f}")
     if cashes:
         print(f"  (转现金 {len(cashes)} 只：{', '.join(r[0] for r in cashes)})")
-    print(f"  -> 留现金: {left:,.2f} 元；已保存: {out}")
+    print(f"  -> 已保存: {out}")
 
 
 if __name__ == "__main__":
