@@ -585,19 +585,86 @@ border-radius:8px;padding:10px 12px;font-size:13px;margin-top:16px;line-height:1
     print(f"  -> 前沿可视化已写出: {html_path}")
 
 
-def _write_ml_html(r):
-    """写出 ML/DL 择时叠加层对比的自包含 HTML(硬择时 vs 软加权 vs 始终持有)。"""
+def _print_ml_block(title, r):
+    """打印单个特征面板的硬择时/软加权/恒定比例空基准。"""
+    a = r["always"]
+    lab = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
+    print(f"  [{title}]")
+    print(f"  {'模型':<14}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'持有命中率':>11}{'持有占比/暴露':>13}")
+    print(f"  {'始终持有':<14}{a['ann']*100:>8.1f}%{a['sharpe']:>9.2f}{a['mdd']*100:>8.1f}%"
+          f"{'  -':>11}{'100%':>13}")
+    for k, m in r["models"].items():
+        h = m["hard"]; s = m["soft"]
+        print(f"  {lab.get(k, k):<14}{h['ann']*100:>8.1f}%{h['sharpe']:>9.2f}{h['mdd']*100:>8.1f}%"
+              f"{h['hit']*100:>10.0f}%{s['avg_exp']*100:>11.0f}%")
+    if r["constant"]:
+        for f, c in r["constant"].items():
+            print(f"  {int(f*100):>4}%恒定{'':<8}{c['ann']*100:>8.1f}%{c['sharpe']:>9.2f}{c['mdd']*100:>8.1f}%")
+
+
+def _print_ml_yearly(ry):
+    """打印逐年滚动 OOS：每年软加权 vs 始终持有 vs 恒定60%。"""
+    print(f"  [逐年滚动 OOS (自 {ry['test_start']})]")
+    print(f"  {'年':<6}{'始终年化':>10}{'始终回撤':>9}{'恒60%年化':>11}{'恒60%回撤':>10}{'最优软模型':>16}{'软Sharpe':>9}")
+    for yr, yd in ry["yearly"].items():
+        a = yd["always"]; c = yd["const60"]
+        best_k = max(yd["soft"], key=lambda k: yd["soft"][k]["sharpe"])
+        bs = yd["soft"][best_k]
+        print(f"  {yr:<6}{a['ann']*100:>9.1f}%{a['mdd']*100:>8.1f}%{c['ann']*100:>10.1f}%"
+              f"{c['mdd']*100:>9.1f}%{best_k:>14}{bs['sharpe']:>9.2f}")
+    n = len(ry["yearly"])
+    n_soft_win = sum(1 for yd in ry["yearly"].values()
+                     if max(yd["soft"].values(), key=lambda m: m["sharpe"])["sharpe"] > yd["always"]["sharpe"])
+    n_const_dom = sum(1 for yd in ry["yearly"].values()
+                      if yd["const60"]["sharpe"] >= max(yd["soft"].values(), key=lambda m: m["sharpe"])["sharpe"])
+    print(f"  -> {n_soft_win}/{n} 年软加权 Sharpe 跑赢始终持有；"
+          f"{n_const_dom}/{n} 年恒定60% Sharpe ≥ 最优软加权")
+
+
+def _html_ml_block(r, idx, title):
+    """返回单个面板 hard/soft/constant 三表的 HTML 片段。"""
+    a = r["always"]
+    lab = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
+    h = (f"<h3 style='color:#9db4ff'>{idx}、{title}</h3>"
+         "<table><thead><tr><th>模型</th><th>年化</th><th>Sharpe</th><th>最大回撤</th>"
+         "<th>命中率</th><th>持有占比/暴露</th></tr></thead><tbody>")
+    cls_a = "win" if a["ann"] >= 0 else "lose"
+    h += (f"<tr><td>始终持有(基准)</td><td class='{cls_a}'>{a['ann']*100:+.1f}%</td>"
+          f"<td>{a['sharpe']:.2f}</td><td>{a['mdd']*100:.1f}%</td><td>-</td><td>100%</td></tr>")
+    for k, m in r["models"].items():
+        hh = m["hard"]; s = m["soft"]
+        cls = "win" if hh["ann"] >= 0 else "lose"
+        h += (f"<tr><td>{lab.get(k, k)}</td><td class='{cls}'>{hh['ann']*100:+.1f}%</td>"
+              f"<td>{hh['sharpe']:.2f}</td><td>{hh['mdd']*100:.1f}%</td>"
+              f"<td>{hh['hit']*100:.0f}%</td><td>{s['avg_exp']*100:.0f}%</td></tr>")
+    h += "</tbody></table>"
+    if r["constant"]:
+        h += ("<table style='margin-top:8px'><thead><tr><th>空基准(恒定比例)</th><th>年化</th>"
+              "<th>Sharpe</th><th>最大回撤</th></tr></thead><tbody>")
+        for f, c in r["constant"].items():
+            cls = "win" if c["ann"] >= 0 else "lose"
+            h += (f"<tr><td>{int(f*100)}%</td><td class='{cls}'>{c['ann']*100:+.1f}%</td>"
+                  f"<td>{c['sharpe']:.2f}</td><td>{c['mdd']*100:.1f}%</td></tr>")
+        h += "</tbody></table>"
+    return h
+
+
+def _write_ml_html_multi(panels, ry):
+    """写出多面板 + 逐年 OOS 的 ML/DL 验证报告。"""
     import os as _os
     here = _os.path.dirname(__file__)
     doc_dir = _os.path.normpath(_os.path.join(here, "..", "..", "docs"))
     _os.makedirs(doc_dir, exist_ok=True)
-    a = r["always"]
-    LAB = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
-    # 软加权 Sharpe 最高者
-    best_k, best_m = max(r["models"].items(), key=lambda kv: kv[1]["soft"]["sharpe"])
+    # 用 v1 做主裁定
+    r0 = panels[list(panels.keys())[0]]
+    a = r0["always"]
+    lab = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
+    best_k, best_m = max(r0["models"].items(), key=lambda kv: kv[1]["soft"]["sharpe"])
     beats = best_m["soft"]["sharpe"] > a["sharpe"]
-    md = {k: m["soft"]["mdd"] for k, m in r["models"].items()}
+    md = {k: m["soft"]["mdd"] for k, m in r0["models"].items()}
     best_md_k = max(md, key=md.get)
+    verdict = ("跑赢" if beats else "未跑赢") + "始终持有基准"
+    badge = "ok" if beats else "no"
 
     html = ("<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
             "<title>ML/DL 择时叠加层验证</title>"
@@ -610,54 +677,32 @@ def _write_ml_html(r):
             ".badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px}"
             ".ok{background:#16351f;color:#6ee7a0}.no{background:#3a1d1d;color:#ff9b9b}</style></head>"
             "<body><h1>ML/DL 择时叠加层验证报告</h1>"
-            f"<div class='sub'>测试窗自 {r['test_start']} · 共 {r['n_decisions']} 个月度决策 · "
+            f"<div class='sub'>测试窗自 {r0['test_start']} · 共 {r0['n_decisions']} 个月度决策 · "
             f"expanding-window walk-forward(无前视) · 数据: TimescaleDB bars_1d (QMT回填)</div>")
 
-    # 硬择时表
-    html += ("<h3 style='color:#9db4ff'>一、硬择时：预测上涨才全仓，否则转现金</h3>"
-             "<table><thead><tr><th>模型</th><th>年化</th><th>Sharpe</th><th>最大回撤</th>"
-             "<th>持有命中率</th><th>持有占比</th></tr></thead><tbody>")
-    cls_a = "win" if a["ann"] >= 0 else "lose"
-    html += (f"<tr><td>始终持有(基准)</td><td class='{cls_a}'>{a['ann']*100:+.1f}%</td>"
-             f"<td>{a['sharpe']:.2f}</td><td>{a['mdd']*100:.1f}%</td><td>-</td><td>100%</td></tr>")
-    for k, m in r["models"].items():
-        h = m["hard"]
-        cls = "win" if h["ann"] >= 0 else "lose"
-        html += (f"<tr><td>{LAB.get(k, k)}</td><td class='{cls}'>{h['ann']*100:+.1f}%</td>"
-                 f"<td>{h['sharpe']:.2f}</td><td>{h['mdd']*100:.1f}%</td>"
-                 f"<td>{h['hit']*100:.0f}%</td><td>{h['hold_rate']*100:.0f}%</td></tr>")
+    for i, (pk, pr) in enumerate(panels.items(), 1):
+        title = {"v1": "基础特征(7维: 宽度/动量/波动/回撤)",
+                 "v2": "增强特征(多期限宽度+风险偏好+期限利差+黄金+离散度)"}.get(pk, pk)
+        html += _html_ml_block(pr, i, title)
+
+    # 逐年 OOS
+    html += ("<h3 style='color:#9db4ff'>三、逐年滚动 OOS 稳定性</h3>"
+             "<table><thead><tr><th>年</th><th>始终年化</th><th>始终回撤</th><th>恒60%年化</th>"
+             "<th>恒60%回撤</th><th>最优软模型</th><th>软Sharpe</th></tr></thead><tbody>")
+    for yr, yd in ry["yearly"].items():
+        aa = yd["always"]; c = yd["const60"]
+        bk = max(yd["soft"], key=lambda k: yd["soft"][k]["sharpe"])
+        bs = yd["soft"][bk]
+        html += (f"<tr><td>{yr}</td><td>{aa['ann']*100:+.1f}%</td><td>{aa['mdd']*100:.1f}%</td>"
+                 f"<td>{c['ann']*100:+.1f}%</td><td>{c['mdd']*100:.1f}%</td>"
+                 f"<td>{lab.get(bk, bk)}</td><td>{bs['sharpe']:.2f}</td></tr>")
     html += "</tbody></table>"
 
-    # 软加权表
-    html += ("<h3 style='color:#9db4ff'>二、软择时：暴露=模型上涨概率(连续0~1)，降低 whip-saw</h3>"
-             "<table><thead><tr><th>模型</th><th>年化</th><th>Sharpe</th><th>最大回撤</th>"
-             "<th>平均暴露</th></tr></thead><tbody>")
-    for k, m in r["models"].items():
-        s = m["soft"]
-        cls = "win" if s["ann"] >= 0 else "lose"
-        html += (f"<tr><td>{LAB.get(k, k)}</td><td class='{cls}'>{s['ann']*100:+.1f}%</td>"
-                 f"<td>{s['sharpe']:.2f}</td><td>{s['mdd']*100:.1f}%</td>"
-                 f"<td>{s['avg_exp']*100:.0f}%</td></tr>")
-    html += "</tbody></table>"
-
-    # 恒定比例空基准表
-    if r["constant"]:
-        html += ("<h3 style='color:#9db4ff'>三、空基准：恒定比例持有(检验软加权是否只是降杠杆)</h3>"
-                 "<table><thead><tr><th>风险暴露</th><th>年化</th><th>Sharpe</th><th>最大回撤</th></tr>"
-                 "</thead><tbody>")
-        for f, c in r["constant"].items():
-            cls = "win" if c["ann"] >= 0 else "lose"
-            html += (f"<tr><td>{int(f*100)}%</td><td class='{cls}'>{c['ann']*100:+.1f}%</td>"
-                     f"<td>{c['sharpe']:.2f}</td><td>{c['mdd']*100:.1f}%</td></tr>")
-        html += "</tbody></table>"
-
-    verdict = ("跑赢" if beats else "未跑赢") + "始终持有基准"
-    badge = "ok" if beats else "no"
     html += (f"<h3 style='color:#9db4ff'>四、裁定</h3>"
-             f"<p>最优 ML/DL(软加权) = <b>{LAB.get(best_k, best_k)}</b> "
+             f"<p>最优 ML/DL(软加权, v1) = <b>{lab.get(best_k, best_k)}</b> "
              f"(Sharpe {best_m['soft']['sharpe']:.2f}) "
              f"<span class='badge {badge}'>{verdict}</span></p>"
-             f"<p class='note'>软加权最小回撤来自 <b>{LAB.get(best_md_k, best_md_k)}</b>："
+             f"<p class='note'>软加权最小回撤来自 <b>{lab.get(best_md_k, best_md_k)}</b>："
              f"<b>{md[best_md_k]*100:.1f}%</b>(基准 {a['mdd']*100:.1f}%) —— "
              "类'降杠杆'效果，回撤减半，对'回撤可控/能睡着'诉求直接有用；"
              "但 Sharpe 未超过'恒定比例持有'，说明模型概率没能在下跌前自动变低，"
@@ -665,7 +710,8 @@ def _write_ml_html(r):
              f"<p class='note'><b>空基准证伪</b>：恒定 60% 持有 = 5.4% / Sharpe 1.03 / -4.8%，"
              f"而最优软加权(MLP, 平均暴露58%) = 5.1% / Sharpe 0.99 / -4.9%——两者几乎重合，"
              f"且 ML 的 Sharpe 反而<b>略低于</b>恒定比例持有，即 ML 软加权被朴素'永远持60%'严格 dominate。"
-             f"结论：本样本下 ML/DL 择时层不创造 alpha，要产生价值需更大样本或更具预测力的特征。</p>"
+             f"增强特征(v2)也未改变结论。逐年 OOS 中恒定60%在多数年份 Sharpe ≥ 最优软加权，"
+             f"进一步坐实：本样本下 ML/DL 择时层不创造 alpha。</p>"
              "<p class='note'>说明：本环境 sklearn.LogisticRegression.fit() 静默 segfault(二进制兼容bug)，"
              "故 ML 用 LightGBM/XGBoost、DL 用 PyTorch MLP；三模型均按 expanding-window walk-forward 训练，"
              "预测月用此前全部历史、收益在预测后才'实现'，严格无前视。样本仅~90个月度点(44测试月)，"
@@ -682,49 +728,18 @@ def _write_ml_html(r):
 def cmd_ml():
     print("\n===== ML/DL 择时叠加层（LightGBM / XGBoost / PyTorch MLP，expanding walk-forward） =====")
     try:
-        r = method_ml.walk_forward_ml()
+        r1 = method_ml.walk_forward_ml(panel_fn=method_ml.build_ml_panel)
+        r2 = method_ml.walk_forward_ml(panel_fn=method_ml.build_ml_panel_v2)
+        ry = method_ml.rolling_walk_forward_ml(panel_fn=method_ml.build_ml_panel)
     except DataError as e:
         print(f"  [跳过] {e}")
         return
-    print(f"  测试窗自 {r['test_start']}，共 {r['n_decisions']} 个月度决策；"
+    print(f"  测试窗自 {r1['test_start']}，共 {r1['n_decisions']} 个月度决策；"
           f"对比基准=始终持有趋势策略")
-    a = r["always"]
-    LAB = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
-    print(f"  [硬择时：预测上涨才全仓，否则现金]")
-    print(f"  {'模型':<14}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'持有命中率':>11}{'持有占比':>9}")
-    print(f"  {'始终持有':<14}{a['ann']*100:>8.1f}%{a['sharpe']:>9.2f}{a['mdd']*100:>8.1f}%"
-          f"{'  -':>11}{'100%':>9}")
-    for k, m in r["models"].items():
-        h = m["hard"]
-        print(f"  {LAB.get(k, k):<14}{h['ann']*100:>8.1f}%{h['sharpe']:>9.2f}{h['mdd']*100:>8.1f}%"
-              f"{h['hit']*100:>10.0f}%{h['hold_rate']*100:>8.0f}%")
-    print(f"  [软择时：暴露=模型上涨概率(连续0~1)，降低 whip-saw]")
-    print(f"  {'模型':<14}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'平均暴露':>9}")
-    for k, m in r["models"].items():
-        s = m["soft"]
-        print(f"  {LAB.get(k, k):<14}{s['ann']*100:>8.1f}%{s['sharpe']:>9.2f}{s['mdd']*100:>8.1f}%"
-              f"{s['avg_exp']*100:>8.0f}%")
-    # 取软加权 Sharpe 最高者作为 ML/DL 代表
-    best_k, best_m = max(r["models"].items(), key=lambda kv: kv[1]["soft"]["sharpe"])
-    beats = best_m["soft"]["sharpe"] > a["sharpe"]
-    print(f"  -> 最优 ML/DL(软加权) {best_k}(Sharpe {best_m['soft']['sharpe']:.2f}) "
-          f"{'跑赢' if beats else '未跑赢'}始终持有基准({a['sharpe']:.2f})")
-    # 回撤改善：软加权对'能睡着'最有价值(用户目标=回撤可控)。MDD 为负，最优=最接0(max)
-    md = {k: m["soft"]["mdd"] for k, m in r["models"].items()}
-    best_md_k = max(md, key=md.get)
-    print(f"  -> 软加权最小回撤来自 {best_md_k}: "
-          f"{md[best_md_k]*100:.1f}%(基准 {a['mdd']*100:.1f}%) —— 类降杠杆效果，"
-          f"适合'回撤可控'诉求，但 Sharpe 未超恒定比例持有=无真择时 alpha")
-    if not beats:
-        print("  -> 样本仅~90个月度点：ML/DL 软加权≈把暴露恒定降到~60%，回撤减半是降杠杆"
-              "而非预测本事；叠加层要产生择时 alpha 需更大样本/更好特征。")
-    # 恒定比例空基准：用于证伪"软加权=真择时 alpha"
-    if r["constant"]:
-        print(f"  [空基准：恒定比例持有，检验软加权是否只是降杠杆]")
-        print(f"  {'比例':<8}{'年化':>9}{'Sharpe':>9}{'回撤':>9}")
-        for f, c in r["constant"].items():
-            print(f"  {int(f*100):>4}%{'':<4}{c['ann']*100:>8.1f}%{c['sharpe']:>9.2f}{c['mdd']*100:>8.1f}%")
-    _write_ml_html(r)
+    _print_ml_block("v1 基础特征(7维)", r1)
+    _print_ml_block("v2 增强特征", r2)
+    _print_ml_yearly(ry)
+    _write_ml_html_multi({"v1": r1, "v2": r2}, ry)
 
 
 def cmd_calltracker(json_path=None):
