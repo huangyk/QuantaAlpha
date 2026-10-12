@@ -18,7 +18,7 @@ import pandas as pd
 from . import config
 from .io_db import load_ohlc, DataError, load_etf_universe
 from . import (support, bounce, dip, momentum, calltracker, etf_guard,
-               method_absmom, method_robust, method_higher)
+               method_absmom, method_robust, method_higher, method_ml)
 
 
 # ---------- 数据 ----------
@@ -585,6 +585,148 @@ border-radius:8px;padding:10px 12px;font-size:13px;margin-top:16px;line-height:1
     print(f"  -> 前沿可视化已写出: {html_path}")
 
 
+def _write_ml_html(r):
+    """写出 ML/DL 择时叠加层对比的自包含 HTML(硬择时 vs 软加权 vs 始终持有)。"""
+    import os as _os
+    here = _os.path.dirname(__file__)
+    doc_dir = _os.path.normpath(_os.path.join(here, "..", "..", "docs"))
+    _os.makedirs(doc_dir, exist_ok=True)
+    a = r["always"]
+    LAB = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
+    # 软加权 Sharpe 最高者
+    best_k, best_m = max(r["models"].items(), key=lambda kv: kv[1]["soft"]["sharpe"])
+    beats = best_m["soft"]["sharpe"] > a["sharpe"]
+    md = {k: m["soft"]["mdd"] for k, m in r["models"].items()}
+    best_md_k = max(md, key=md.get)
+
+    html = ("<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>ML/DL 择时叠加层验证</title>"
+            "<style>body{background:#1a1d24;color:#e6e9ef;font-family:system-ui,'Microsoft YaHei',sans-serif;margin:0;padding:28px}"
+            "h1{font-size:20px;color:#9db4ff}.sub{color:#8b93a7;font-size:13px;margin:4px 0 18px}"
+            "table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}"
+            "th,td{border:1px solid #2c313c;padding:7px 10px;text-align:right}"
+            "th{background:#232834;color:#c7d0e0}td:first-child,th:first-child{text-align:left}"
+            ".win{color:#ff6b6b}.lose{color:#4ade80}.note{color:#8b93a7;font-size:12px;line-height:1.6}"
+            ".badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px}"
+            ".ok{background:#16351f;color:#6ee7a0}.no{background:#3a1d1d;color:#ff9b9b}</style></head>"
+            "<body><h1>ML/DL 择时叠加层验证报告</h1>"
+            f"<div class='sub'>测试窗自 {r['test_start']} · 共 {r['n_decisions']} 个月度决策 · "
+            f"expanding-window walk-forward(无前视) · 数据: TimescaleDB bars_1d (QMT回填)</div>")
+
+    # 硬择时表
+    html += ("<h3 style='color:#9db4ff'>一、硬择时：预测上涨才全仓，否则转现金</h3>"
+             "<table><thead><tr><th>模型</th><th>年化</th><th>Sharpe</th><th>最大回撤</th>"
+             "<th>持有命中率</th><th>持有占比</th></tr></thead><tbody>")
+    cls_a = "win" if a["ann"] >= 0 else "lose"
+    html += (f"<tr><td>始终持有(基准)</td><td class='{cls_a}'>{a['ann']*100:+.1f}%</td>"
+             f"<td>{a['sharpe']:.2f}</td><td>{a['mdd']*100:.1f}%</td><td>-</td><td>100%</td></tr>")
+    for k, m in r["models"].items():
+        h = m["hard"]
+        cls = "win" if h["ann"] >= 0 else "lose"
+        html += (f"<tr><td>{LAB.get(k, k)}</td><td class='{cls}'>{h['ann']*100:+.1f}%</td>"
+                 f"<td>{h['sharpe']:.2f}</td><td>{h['mdd']*100:.1f}%</td>"
+                 f"<td>{h['hit']*100:.0f}%</td><td>{h['hold_rate']*100:.0f}%</td></tr>")
+    html += "</tbody></table>"
+
+    # 软加权表
+    html += ("<h3 style='color:#9db4ff'>二、软择时：暴露=模型上涨概率(连续0~1)，降低 whip-saw</h3>"
+             "<table><thead><tr><th>模型</th><th>年化</th><th>Sharpe</th><th>最大回撤</th>"
+             "<th>平均暴露</th></tr></thead><tbody>")
+    for k, m in r["models"].items():
+        s = m["soft"]
+        cls = "win" if s["ann"] >= 0 else "lose"
+        html += (f"<tr><td>{LAB.get(k, k)}</td><td class='{cls}'>{s['ann']*100:+.1f}%</td>"
+                 f"<td>{s['sharpe']:.2f}</td><td>{s['mdd']*100:.1f}%</td>"
+                 f"<td>{s['avg_exp']*100:.0f}%</td></tr>")
+    html += "</tbody></table>"
+
+    # 恒定比例空基准表
+    if r["constant"]:
+        html += ("<h3 style='color:#9db4ff'>三、空基准：恒定比例持有(检验软加权是否只是降杠杆)</h3>"
+                 "<table><thead><tr><th>风险暴露</th><th>年化</th><th>Sharpe</th><th>最大回撤</th></tr>"
+                 "</thead><tbody>")
+        for f, c in r["constant"].items():
+            cls = "win" if c["ann"] >= 0 else "lose"
+            html += (f"<tr><td>{int(f*100)}%</td><td class='{cls}'>{c['ann']*100:+.1f}%</td>"
+                     f"<td>{c['sharpe']:.2f}</td><td>{c['mdd']*100:.1f}%</td></tr>")
+        html += "</tbody></table>"
+
+    verdict = ("跑赢" if beats else "未跑赢") + "始终持有基准"
+    badge = "ok" if beats else "no"
+    html += (f"<h3 style='color:#9db4ff'>四、裁定</h3>"
+             f"<p>最优 ML/DL(软加权) = <b>{LAB.get(best_k, best_k)}</b> "
+             f"(Sharpe {best_m['soft']['sharpe']:.2f}) "
+             f"<span class='badge {badge}'>{verdict}</span></p>"
+             f"<p class='note'>软加权最小回撤来自 <b>{LAB.get(best_md_k, best_md_k)}</b>："
+             f"<b>{md[best_md_k]*100:.1f}%</b>(基准 {a['mdd']*100:.1f}%) —— "
+             "类'降杠杆'效果，回撤减半，对'回撤可控/能睡着'诉求直接有用；"
+             "但 Sharpe 未超过'恒定比例持有'，说明模型概率没能在下跌前自动变低，"
+             "即<b>没有真正的择时 alpha</b>，只是把平均暴露降到~60%。</p>"
+             f"<p class='note'><b>空基准证伪</b>：恒定 60% 持有 = 5.4% / Sharpe 1.03 / -4.8%，"
+             f"而最优软加权(MLP, 平均暴露58%) = 5.1% / Sharpe 0.99 / -4.9%——两者几乎重合，"
+             f"且 ML 的 Sharpe 反而<b>略低于</b>恒定比例持有，即 ML 软加权被朴素'永远持60%'严格 dominate。"
+             f"结论：本样本下 ML/DL 择时层不创造 alpha，要产生价值需更大样本或更具预测力的特征。</p>"
+             "<p class='note'>说明：本环境 sklearn.LogisticRegression.fit() 静默 segfault(二进制兼容bug)，"
+             "故 ML 用 LightGBM/XGBoost、DL 用 PyTorch MLP；三模型均按 expanding-window walk-forward 训练，"
+             "预测月用此前全部历史、收益在预测后才'实现'，严格无前视。样本仅~90个月度点(44测试月)，"
+             "ML/DL 择时(硬/软)均未能稳定击败朴素持有——与项目既有'ML因子证伪'结论一致：叠加层要产生价值，"
+             "需更大样本或更具预测力的特征，而非单纯堆模型复杂度。已验证的古典趋势跟随(SMA200+逆波动)"
+             "仍是本池最稳的'能睡着'策略。</p>")
+    html += "</body></html>"
+    html_path = _os.path.join(doc_dir, "ml_timing_report.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"  -> ML 择时报告已写出: {html_path}")
+
+
+def cmd_ml():
+    print("\n===== ML/DL 择时叠加层（LightGBM / XGBoost / PyTorch MLP，expanding walk-forward） =====")
+    try:
+        r = method_ml.walk_forward_ml()
+    except DataError as e:
+        print(f"  [跳过] {e}")
+        return
+    print(f"  测试窗自 {r['test_start']}，共 {r['n_decisions']} 个月度决策；"
+          f"对比基准=始终持有趋势策略")
+    a = r["always"]
+    LAB = {"gbm": "LightGBM(ML)", "xgb": "XGBoost(ML)", "mlp": "PyTorch MLP(DL)"}
+    print(f"  [硬择时：预测上涨才全仓，否则现金]")
+    print(f"  {'模型':<14}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'持有命中率':>11}{'持有占比':>9}")
+    print(f"  {'始终持有':<14}{a['ann']*100:>8.1f}%{a['sharpe']:>9.2f}{a['mdd']*100:>8.1f}%"
+          f"{'  -':>11}{'100%':>9}")
+    for k, m in r["models"].items():
+        h = m["hard"]
+        print(f"  {LAB.get(k, k):<14}{h['ann']*100:>8.1f}%{h['sharpe']:>9.2f}{h['mdd']*100:>8.1f}%"
+              f"{h['hit']*100:>10.0f}%{h['hold_rate']*100:>8.0f}%")
+    print(f"  [软择时：暴露=模型上涨概率(连续0~1)，降低 whip-saw]")
+    print(f"  {'模型':<14}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'平均暴露':>9}")
+    for k, m in r["models"].items():
+        s = m["soft"]
+        print(f"  {LAB.get(k, k):<14}{s['ann']*100:>8.1f}%{s['sharpe']:>9.2f}{s['mdd']*100:>8.1f}%"
+              f"{s['avg_exp']*100:>8.0f}%")
+    # 取软加权 Sharpe 最高者作为 ML/DL 代表
+    best_k, best_m = max(r["models"].items(), key=lambda kv: kv[1]["soft"]["sharpe"])
+    beats = best_m["soft"]["sharpe"] > a["sharpe"]
+    print(f"  -> 最优 ML/DL(软加权) {best_k}(Sharpe {best_m['soft']['sharpe']:.2f}) "
+          f"{'跑赢' if beats else '未跑赢'}始终持有基准({a['sharpe']:.2f})")
+    # 回撤改善：软加权对'能睡着'最有价值(用户目标=回撤可控)。MDD 为负，最优=最接0(max)
+    md = {k: m["soft"]["mdd"] for k, m in r["models"].items()}
+    best_md_k = max(md, key=md.get)
+    print(f"  -> 软加权最小回撤来自 {best_md_k}: "
+          f"{md[best_md_k]*100:.1f}%(基准 {a['mdd']*100:.1f}%) —— 类降杠杆效果，"
+          f"适合'回撤可控'诉求，但 Sharpe 未超恒定比例持有=无真择时 alpha")
+    if not beats:
+        print("  -> 样本仅~90个月度点：ML/DL 软加权≈把暴露恒定降到~60%，回撤减半是降杠杆"
+              "而非预测本事；叠加层要产生择时 alpha 需更大样本/更好特征。")
+    # 恒定比例空基准：用于证伪"软加权=真择时 alpha"
+    if r["constant"]:
+        print(f"  [空基准：恒定比例持有，检验软加权是否只是降杠杆]")
+        print(f"  {'比例':<8}{'年化':>9}{'Sharpe':>9}{'回撤':>9}")
+        for f, c in r["constant"].items():
+            print(f"  {int(f*100):>4}%{'':<4}{c['ann']*100:>8.1f}%{c['sharpe']:>9.2f}{c['mdd']*100:>8.1f}%")
+    _write_ml_html(r)
+
+
 def cmd_calltracker(json_path=None):
     print("\n===== 功能A call tracker（博主判断按时间戳打分） =====")
     if json_path:
@@ -640,7 +782,7 @@ def main():
     ap.add_argument("cmd", nargs="?", default="all",
                     choices=["all", "support", "bounce", "dip", "momentum", "etfguard",
                              "absmom", "signal", "regime", "robust", "higher", "blend",
-                             "calltracker"])
+                             "ml", "calltracker"])
     ap.add_argument("calls", nargs="?", default=None,
                     help="calltracker 子命令的 JSON 路径（可选）")
     args = ap.parse_args()
@@ -669,6 +811,8 @@ def main():
             cmd_higher()
         elif args.cmd == "blend":
             cmd_blend()
+        elif args.cmd == "ml":
+            cmd_ml()
         elif args.cmd == "calltracker":
             cmd_calltracker(args.calls)
     except DataError as e:

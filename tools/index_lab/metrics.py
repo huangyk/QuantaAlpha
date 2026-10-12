@@ -4,19 +4,21 @@ import numpy as np
 from .config import TRADING_DAYS
 
 
-def metrics(rets, switch_cost: float = 0.0):
-    """rets: 日收益序列(已含切换成本)。返回 dict。
+def metrics(rets, switch_cost: float = 0.0, freq: str = "d"):
+    """rets: 收益序列(已含切换成本)。freq: 'd'日频(默认, 252) / 'm'月频(12) / 'w'周频(52)。
 
+    年化因子随 freq 切换——喂月度收益必须传 freq='m'，否则会按日频错误放大(曾出年化517%)。
     对空/非有限序列做防御，避免上游因个别 NaN 崩。
     """
+    periods = {"d": TRADING_DAYS, "m": 12, "w": 52}.get(freq, TRADING_DAYS)
     rets = np.asarray(rets, dtype=float)
     rets = rets[np.isfinite(rets)]
     if len(rets) == 0:
         return dict(ann=0.0, vol=0.0, sharpe=0.0, mdd=0.0, nav=1.0, n=0)
     nav = np.cumprod(1 + rets)
     n = len(rets)
-    ann = nav[-1] ** (TRADING_DAYS / n) - 1 if nav[-1] > 0 else -1.0
-    vol = rets.std() * np.sqrt(TRADING_DAYS)
+    ann = nav[-1] ** (periods / n) - 1 if nav[-1] > 0 else -1.0
+    vol = rets.std() * np.sqrt(periods)
     sharpe = ann / vol if vol > 0 else 0.0
     peak = np.maximum.accumulate(nav)
     mdd = float((nav / peak - 1).min())
