@@ -66,8 +66,22 @@ def check(text):
     compile(text, "absmom", "exec")            # 语法
     if not text.startswith("#coding:gbk"):
         warnings.append("首行不是 #coding:gbk，QMT 解析可能失败")
+
+    # ★编码声明必须唯一且只占第1行。Python 只认第1行的 coding 声明，
+    #   若第2行再写一次 utf-8 而实际内容是 GBK（或反之），
+    #   编译时会报 "codec can't decode byte 0x.." ��这类极难定位的错。
+    lines = text.split("\n")
+    decl = [(i + 1, l.strip()) for i, l in enumerate(lines[:5])
+            if re.search(r"coding[:=]\s*[\w-]+", l)]
+    if len(decl) > 1:
+        warnings.append("第1-5行有多个编码声明 %s，Python只认第1行 -> 必须只保留第1行"
+                        % [d[1] for d in decl])
+    if decl and decl[0][0] != 1:
+        warnings.append("编码声明出现在第 %d 行，必须在第 1 行" % decl[0][0])
+
+    # 落地字节自检：整段文本必须能原样编码成 GBK（QMT 的实际解码方式）
     try:
-        text.encode("gbk")                      # QMT 要GBK
+        text.encode("gbk")
     except UnicodeEncodeError as e:
         warnings.append("存在无法转 GBK 的字符: %s" % e)
     if "import pandas" in text:
@@ -113,12 +127,27 @@ def main():
         print("\n[X] 存在警告，未生成。请先修正。")
         sys.exit(1)
 
-    # 给人看的文件 -> UTF-8 + BOM + LF（编辑器打开不乱码）
-    for dst in [OUT_PROJECT] + ([] if args.no_qmt_copy else [OUT_QMT]):
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        with open(dst, "w", encoding="utf-8-sig", newline="\n") as f:
-            f.write(text)
-        print("  已生成 %s (%d bytes, UTF-8+BOM)" % (dst, os.path.getsize(dst)))
+    # 两份文件用不同编码，各有其道理：
+    #  · docs 那份 = 给人看的 -> UTF-8+BOM，编辑器/记事本打开不乱码
+    #  · QMT 那份 = 给 QMT 读的 -> **必须 GBK + 无 BOM**。
+    #    QMT 按 GBK 处理策略文本，若给 UTF-8 会报
+    #    "codec can't decode byte 0x.."（实测踩过）。
+    #    代价：用 UTF-8 编辑器打开这份会看到乱码，属正常 —— 只复制内容、别看内容。
+    os.makedirs(os.path.dirname(OUT_PROJECT), exist_ok=True)
+    with open(OUT_PROJECT, "w", encoding="utf-8-sig", newline="\n") as f:
+        f.write(text)
+    print("  已生成 %s (%d bytes, UTF-8+BOM / 供查阅)" % (OUT_PROJECT, os.path.getsize(OUT_PROJECT)))
+
+    if not args.no_qmt_copy:
+        os.makedirs(os.path.dirname(OUT_QMT), exist_ok=True)
+        with open(OUT_QMT, "wb") as f:
+            f.write(text.replace("\r\n", "\n").encode("gbk"))
+        # 自检：按 QMT 的方式读回来并编译
+        chk = open(OUT_QMT, "rb").read()
+        assert chk[:3] != b"\xef\xbb\xbf", "QMT 版不应带 BOM"
+        compile(chk.decode("gbk"), "absmom", "exec")
+        print("  已生成 %s (%d bytes, GBK / 给QMT粘贴, 已自检通过)"
+              % (OUT_QMT, os.path.getsize(OUT_QMT)))
 
     print("\n下一步（QMT 内操作）:")
     print("  1)【我的】→ 新建策略 → Python 策略")
