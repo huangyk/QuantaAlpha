@@ -18,6 +18,7 @@ from .config import DB, ETF_COMM
 from .io_db import DataError, load_etf_universe
 from .metrics import metrics
 from .etf_guard import etf_equal_weight
+from .method_absmom import abs_momentum_etf
 
 # 纯固收/货币 ETF（60日年化波动 < 5%，现金类）。
 # 注：511380 可转债ETF 波动 ~9% 属混合型，保留在高beta池内。
@@ -258,3 +259,91 @@ def cost_sens_higher(start="2019-01-01", end="2026-09-30", topk=3, weight="inv_v
         rows.append(dict(cost=c, **_stat(r), beats=bool(r["sharpe"] > base["sharpe"]),
                          base_sharpe=base["sharpe"]))
     return rows
+
+
+# ---------------- 收益-回撤前沿（核心-卫星混合） ----------------
+def blend_absmomentum(codes_all, start, end, blend, signal="sma200",
+                      weight="inv_vol", cost=ETF_COMM, sma_w=200):
+    """核心-卫星混合：底盘(全池 sma200/inv_vol) 与 H1(高beta池 sma200/inv_vol)
+    按 blend(0~1, H1 卫星权重) 组合。
+
+    模型：投资者把 (1-blend) 配到底盘 sleeve、blend 配到 H1 sleeve；每个 sleeve
+    各自月频调仓、内部可转现金（不是把两个池合并成一个池）。组合日收益 =
+    (1-blend)*底盘日收益 + blend*H1日收益，再复利成 NAV。
+    blend=1.0 即纯 H1；blend=0.0 即纯底盘。返回 dict(nav, ann, vol, sharpe, mdd)。
+    """
+    codes = list(codes_all)
+    hb = [c for c in codes if not is_bond_cash(c)]
+    base = abs_momentum_etf(codes, start, end, signal=signal, weight=weight,
+                            cost=cost, sma_w=sma_w)
+    h1 = highbeta_abs_momentum(hb, start, end, signal=signal, weight=weight,
+                               cost=cost, sma_w=sma_w)
+    rb = base["nav"].pct_change().dropna()
+    rh = h1["nav"].pct_change().dropna()
+    common = rb.index.intersection(rh.index)
+    br = rb.loc[common]; hr = rh.loc[common]
+    blended_ret = (1.0 - blend) * br + blend * hr
+    nav = (1.0 + blended_ret).cumprod()
+    m = metrics(nav.pct_change().dropna())
+    m["nav"] = nav
+    m["time_in_market"] = float(np.mean([base["time_in_market"], h1["time_in_market"]]))
+    m["n_rebal"] = 0
+    return m
+
+
+def run_blend_frontier(start="2019-01-01", end="2026-09-30",
+                       blends=(1.0, 0.75, 0.5, 0.25, 0.0), clean_only=True):
+    """收益-回撤前沿：底盘↔H1 五档混合（全周期 2019-2026）。
+
+    返回 dict：每行含 blend(H1权重)/base_frac/h1_frac/ann/sharpe/mdd/vol，
+    外加两端同口径等权基线（base_equal=全池等权, hb_equal=高beta池等权）。
+    """
+    codes = load_etf_universe(start, end, clean_only)
+    if not codes:
+        raise DataError("ETF 池为空")
+    n_all = len(codes)
+    n_hb = len([c for c in codes if not is_bond_cash(c)])
+    base_eq = etf_equal_weight(codes, start, end, gate_code=None)
+    hb_eq = etf_equal_weight([c for c in codes if not is_bond_cash(c)], start, end, gate_code=None)
+    rows = []
+    for b in blends:
+        r = blend_absmomentum(codes, start, end, b)
+        rows.append(dict(blend=b, base_frac=1.0 - b, h1_frac=b,
+                         ann=r["ann"], sharpe=r["sharpe"], mdd=r["mdd"], vol=r["vol"]))
+    return dict(n_all=n_all, n_hb=n_hb, start=start, end=end, blends=blends, rows=rows,
+                base_equal=dict(ann=base_eq["ann"], sharpe=base_eq["sharpe"], mdd=base_eq["mdd"]),
+                hb_equal=dict(ann=hb_eq["ann"], sharpe=hb_eq["sharpe"], mdd=hb_eq["mdd"]))
+
+
+def walk_forward_blend(start_all="2019-01-01", end="2026-09-30",
+                       train_win=("2019-01-01", "2022-12-31"),
+                       test_win=("2023-01-01", "2026-09-30"),
+                       blends=(1.0, 0.75, 0.5, 0.25, 0.0), clean_only=True):
+    """混合比例 walk-forward OOS：训练/测试窗各自组合，验证所选比例在隔离窗仍稳定。
+
+    关键：blend 是用户风险偏好(非挖掘参数)，测试窗沿用同比例、不重新选参 -> 无过拟合。
+    基线思想：每比例的"应跑赢对象" = 同比例混合两端等权基线（base_equal 与 hb_equal 按
+    同 blend 混合）。若测试窗混合 Sharpe > 混合基线 Sharpe，说明该比例的趋势跟随增强
+    在隔离窗仍有效。
+    """
+    codes = load_etf_universe(start_all, end, clean_only)
+    hb = [c for c in codes if not is_bond_cash(c)]
+    base_tr = abs_momentum_etf(codes, *train_win, signal="sma200", weight="inv_vol")["nav"]
+    h1_tr = highbeta_abs_momentum(hb, *train_win, signal="sma200", weight="inv_vol")["nav"]
+    base_te = abs_momentum_etf(codes, *test_win, signal="sma200", weight="inv_vol")["nav"]
+    h1_te = highbeta_abs_momentum(hb, *test_win, signal="sma200", weight="inv_vol")["nav"]
+
+    def blend_nav(bn, hn, blend):
+        rb = bn.pct_change().dropna(); rh = hn.pct_change().dropna()
+        common = rb.index.intersection(rh.index)
+        ret = (1.0 - blend) * rb.loc[common] + blend * rh.loc[common]
+        return (1.0 + ret).cumprod()
+
+    rows_tr, rows_te = [], []
+    for b in blends:
+        nt = blend_nav(base_tr, h1_tr, b); mt = metrics(nt.pct_change().dropna())
+        ne = blend_nav(base_te, h1_te, b); me = metrics(ne.pct_change().dropna())
+        rows_tr.append(dict(blend=b, ann=mt["ann"], sharpe=mt["sharpe"], mdd=mt["mdd"]))
+        rows_te.append(dict(blend=b, ann=me["ann"], sharpe=me["sharpe"], mdd=me["mdd"]))
+    return dict(blends=blends, train_win=train_win, test_win=test_win,
+                train=rows_tr, test=rows_te)

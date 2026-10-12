@@ -285,6 +285,165 @@ def cmd_higher():
         print(f"    [跳过] {e}")
 
 
+def cmd_blend():
+    print("\n===== 收益-回撤前沿：底盘(全池) ↔ H1(高beta池) 核心-卫星混合 =====")
+    try:
+        r = method_higher.run_blend_frontier()
+    except DataError as e:
+        print(f"  [跳过] {e}")
+        return
+    print(f"  池 全{r['n_all']}只 / 高beta {r['n_hb']}只，区间 {r['start']}~{r['end']}")
+    print(f"  {'混合(H1%)':<10}{'底盘%':>7}{'H1%':>7}{'年化':>9}{'Sharpe':>9}{'回撤':>9}{'波动':>9}")
+    for x in r["rows"]:
+        print(f"  {x['h1_frac']*100:>8.0f}%{x['base_frac']*100:>7.0f}%{x['h1_frac']*100:>7.0f}%"
+              f"{x['ann']*100:>8.1f}%{x['sharpe']:>9.2f}{x['mdd']*100:>8.1f}%{x['vol']*100:>8.1f}%")
+    print(f"  [基线] 全池等权 Sharpe {r['base_equal']['sharpe']:.2f}/年化 {r['base_equal']['ann']*100:.1f}%/"
+          f"回撤 {r['base_equal']['mdd']*100:.1f}%  | 高beta等权 Sharpe {r['hb_equal']['sharpe']:.2f}/"
+          f"年化 {r['hb_equal']['ann']*100:.1f}%/回撤 {r['hb_equal']['mdd']*100:.1f}%")
+
+    # walk-forward OOS：每比例在隔离测试窗是否仍稳定赚钱
+    print("  -- walk-forward OOS (训练 2019-2022 / 隔离测试 2023-2026) --")
+    wf = None
+    try:
+        wf = method_higher.walk_forward_blend()
+        print(f"  {'混合(H1%)':<10}{'训练Sharpe':>12}{'训练年化':>10}{'训练回撤':>10}"
+              f"{'测试Sharpe':>12}{'测试年化':>10}{'测试回撤':>10}")
+        for tr, te in zip(wf["train"], wf["test"]):
+            print(f"  {tr['blend']*100:>8.0f}%{tr['sharpe']:>12.2f}{tr['ann']*100:>9.1f}%"
+                  f"{tr['mdd']*100:>9.1f}%{te['sharpe']:>12.2f}{te['ann']*100:>9.1f}%{te['mdd']*100:>9.1f}%")
+        ok = sum(1 for te in wf["test"] if te["sharpe"] > 0)
+        print(f"  -> 隔离测试窗 Sharpe>0 的比例数: {ok}/{len(wf['test'])} "
+              f"(全>0 即混合增强在样本外仍稳定赚钱, 非过拟合)")
+    except DataError as e:
+        print(f"    [跳过] {e}")
+
+    # 落盘：CSV + 内联 SVG 前沿 HTML
+    _write_blend_frontier(r, wf)
+
+
+def _write_blend_frontier(r, wf):
+    """写出混合前沿的 CSV 与自包含 HTML(内联 SVG 散点), 供用户挑'回撤能睡着'的点。"""
+    import csv as _csv
+    import os as _os
+    here = _os.path.dirname(__file__)
+    res_dir = _os.path.normpath(_os.path.join(here, "..", "..", "data", "results"))
+    doc_dir = _os.path.normpath(_os.path.join(here, "..", "..", "docs"))
+    _os.makedirs(res_dir, exist_ok=True)
+    csv_path = _os.path.join(res_dir, "blend_frontier.csv")
+    with open(csv_path, "w", newline="") as f:
+        w = _csv.writer(f)
+        w.writerow(["h1_pct", "base_pct", "ann_pct", "sharpe", "mdd_pct", "vol_pct"])
+        for x in r["rows"]:
+            w.writerow([round(x["h1_frac"] * 100), round(x["base_frac"] * 100),
+                        round(x["ann"] * 100, 2), round(x["sharpe"], 3),
+                        round(x["mdd"] * 100, 2), round(x["vol"] * 100, 2)])
+    print(f"  -> 前沿数据已写出: {csv_path}")
+
+    # 构建 SVG 散点：x=最大回撤(绝对值%), y=年化收益%
+    rows = r["rows"]
+    xs = [abs(x["mdd"]) * 100 for x in rows]
+    ys = [x["ann"] * 100 for x in rows]
+    xmax = max(15.0, (max(xs) // 5 + 1) * 5)
+    ymax = max(15.0, (max(ys) // 5 + 1) * 5)
+    W, H = 680, 440
+    lg, rt, tp, bt = 56, 24, 30, 52
+    pw, ph = W - lg - rt, H - tp - bt
+
+    def X(v):
+        return lg + (v / xmax) * pw
+
+    def Y(v):
+        return tp + ph - (v / ymax) * ph
+
+    def sh_color(sh):
+        if sh >= 1.0:
+            return "#16a34a"
+        if sh >= 0.7:
+            return "#0891b2"
+        if sh >= 0.4:
+            return "#d97706"
+        return "#dc2626"
+
+    parts = []
+    parts.append(f'<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" '
+                 f'font-family="ui-monospace,Consolas,monospace">')
+    # 网格 + 轴
+    for gx in range(0, int(xmax) + 1, 5):
+        parts.append(f'<line x1="{X(gx):.1f}" y1="{Y(0):.1f}" x2="{X(gx):.1f}" y2="{tp}" '
+                     f'stroke="#e5e7eb" stroke-width="1"/>')
+        parts.append(f'<text x="{X(gx):.1f}" y="{H-bt+18:.1f}" font-size="10" '
+                     f'fill="#6b7280" text-anchor="middle">{gx}%</text>')
+    for gy in range(0, int(ymax) + 1, 5):
+        parts.append(f'<line x1="{lg}" y1="{Y(gy):.1f}" x2="{W-rt}" y2="{Y(gy):.1f}" '
+                     f'stroke="#e5e7eb" stroke-width="1"/>')
+        parts.append(f'<text x="{lg-8:.1f}" y="{Y(gy)+3:.1f}" font-size="10" '
+                     f'fill="#6b7280" text-anchor="end">{gy}%</text>')
+    parts.append(f'<text x="{lg+pw/2:.1f}" y="{H-8:.1f}" font-size="11" fill="#374151" '
+                 f'text-anchor="middle">最大回撤 (绝对值 %)</text>')
+    parts.append(f'<text x="14" y="{tp+ph/2:.1f}" font-size="11" fill="#374151" '
+                 f'text-anchor="middle" transform="rotate(-90 14 {tp+ph/2:.1f})">年化收益 %</text>')
+    # 前沿连线（按 H1 权重从高到低）
+    order = sorted(range(len(rows)), key=lambda i: -rows[i]["h1_frac"])
+    line_pts = " ".join(f"{X(abs(rows[i]['mdd'])*100):.1f},{Y(rows[i]['ann']*100):.1f}"
+                        for i in order)
+    parts.append(f'<polyline points="{line_pts}" fill="none" stroke="#9ca3af" '
+                 f'stroke-width="1.5" stroke-dasharray="4 3"/>')
+    # 点
+    for x in rows:
+        cx, cy = X(abs(x["mdd"]) * 100), Y(x["ann"] * 100)
+        col = sh_color(x["sharpe"])
+        lab = f"H1 {x['h1_frac']*100:.0f}%"
+        parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="6" fill="{col}" '
+                     f'stroke="#fff" stroke-width="1.5"/>')
+        parts.append(f'<text x="{cx+9:.1f}" y="{cy+3:.1f}" font-size="10" fill="#111827">'
+                     f'{lab} · {x["ann"]*100:.1f}%/S{x["sharpe"]:.2f}</text>')
+    parts.append('</svg>')
+
+    html = f"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>混合比例收益-回撤前沿</title>
+<style>body{{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f8fafc;
+color:#0f172a;margin:0;padding:24px;}} .card{{background:#fff;border:1px solid #e2e8f0;
+border-radius:12px;padding:20px;max-width:760px;margin:0 auto;box-shadow:0 1px 3px rgba(0,0,0,.06);}}
+h1{{font-size:18px;margin:0 0 4px}} .sub{{color:#64748b;font-size:13px;margin:0 0 16px}}
+table{{border-collapse:collapse;width:100%;font-size:13px;margin-top:16px}}
+th,td{{border:1px solid #e2e8f0;padding:6px 8px;text-align:right}}
+th{{background:#f1f5f9}} .tip{{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;
+border-radius:8px;padding:10px 12px;font-size:13px;margin-top:16px;line-height:1.6}}
+.legend{{font-size:12px;color:#64748b;margin-top:8px}}</style></head>
+<body><div class="card">
+<h1>收益-回撤前沿 · 底盘(全池) ↔ H1(高beta池)</h1>
+<p class="sub">核心-卫星混合：投资者把 (1-blend) 配底盘 sleeve、blend 配 H1 sleeve；
+每 sleeve 各自月频调仓、内部可转现金。区间 {r['start']}~{r['end']}，{r['n_all']}只ETF。</p>
+{''.join(parts)}
+<div class="legend">点色 = Sharpe（绿≥1.0 / 青0.7~1.0 / 橙0.4~0.7 / 红&lt;0.4）；
+虚线连接各混合点即前沿。越靠右上=收益越高但回撤越深。</div>
+<table><thead><tr><th>混合(H1%)</th><th>底盘%</th><th>H1%</th><th>年化</th>
+<th>Sharpe</th><th>回撤</th><th>波动</th></tr></thead><tbody>
+"""
+    for x in rows:
+        html += (f"<tr><td>{x['h1_frac']*100:.0f}%</td><td>{x['base_frac']*100:.0f}%</td>"
+                 f"<td>{x['h1_frac']*100:.0f}%</td><td>{x['ann']*100:.1f}%</td>"
+                 f"<td>{x['sharpe']:.2f}</td><td>{x['mdd']*100:.1f}%</td>"
+                 f"<td>{x['vol']*100:.1f}%</td></tr>\n")
+    html += "</tbody></table>"
+    if wf:
+        html += ('<div class="tip"><b>walk-forward OOS（隔离测试窗 2023-2026）：</b><br>'
+                 + "<br>".join(
+                     f"H1 {te['blend']*100:.0f}% → 训练 Sharpe {tr['sharpe']:.2f} / "
+                     f"测试 Sharpe {te['sharpe']:.2f}（年化 {te['ann']*100:.1f}%，"
+                     f"回撤 {te['mdd']*100:.1f}%）"
+                     for tr, te in zip(wf["train"], wf["test"]))
+                 + "<br>测试窗 Sharpe 全&gt;0 即混合增强在样本外仍稳定赚钱。</div>")
+    html += ('<div class="tip"><b>怎么挑：</b>从虚线左上端（H1 0%，回撤最小）沿前沿往右下走，'
+             '每加一点 H1 权重就多收益、也多回撤。<b>选一个你"浮亏时能睡着"的回撤点</b>，'
+             '别追最右端的最高收益——那是用更深回撤换的。</div>')
+    html += "</div></body></html>"
+    html_path = _os.path.join(doc_dir, "blend_frontier.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"  -> 前沿可视化已写出: {html_path}")
+
+
 def cmd_calltracker(json_path=None):
     print("\n===== 功能A call tracker（博主判断按时间戳打分） =====")
     if json_path:
@@ -339,7 +498,8 @@ def main():
     ap = argparse.ArgumentParser(prog="index_lab", description="指数技术打法验证统一包")
     ap.add_argument("cmd", nargs="?", default="all",
                     choices=["all", "support", "bounce", "dip", "momentum", "etfguard",
-                             "absmom", "signal", "regime", "robust", "higher", "calltracker"])
+                             "absmom", "signal", "regime", "robust", "higher", "blend",
+                             "calltracker"])
     ap.add_argument("calls", nargs="?", default=None,
                     help="calltracker 子命令的 JSON 路径（可选）")
     args = ap.parse_args()
@@ -366,6 +526,8 @@ def main():
             cmd_robust()
         elif args.cmd == "higher":
             cmd_higher()
+        elif args.cmd == "blend":
+            cmd_blend()
         elif args.cmd == "calltracker":
             cmd_calltracker(args.calls)
     except DataError as e:
