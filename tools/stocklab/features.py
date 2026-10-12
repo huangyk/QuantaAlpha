@@ -41,3 +41,27 @@ def inverse_vol(rets_wk, vol_weeks=12, floor=0.05):
     """逆波动率权重（年化）= 1/max(σ, floor)，σ=周收益滚动std*sqrt(52)。"""
     vol = rets_wk.rolling(vol_weeks).std() * np.sqrt(52)
     return 1.0 / vol.clip(lower=floor)
+
+
+def breadth(close_wk, eligible, ma_weeks=40):
+    """市场宽度：时点池中「收盘 > N 周均线」的占比（0~1）。
+
+    这是市场级择时信号（区别于个股级）：回答"当前有多少股票处于中期上升趋势"。
+    分母只取时点池内且有有效收盘的股票。
+    """
+    ma = close_wk.rolling(ma_weeks).mean()
+    above = (close_wk > ma) & eligible & close_wk.notna()
+    denom = eligible & close_wk.notna()
+    n = denom.sum(axis=1)
+    n = n.where(n > 0)
+    return above.sum(axis=1) / n
+
+
+def equal_weight_index(close_wk, eligible):
+    """时点池等权指数（周频净值），作为"长期持股"的市场基准。"""
+    rets = weekly_returns(close_wk)
+    m = eligible & rets.notna()
+    n = m.sum(axis=1)
+    n = n.where(n > 0)
+    ew_ret = rets.where(m).sum(axis=1) / n
+    return (1 + ew_ret.fillna(0.0)).cumprod()

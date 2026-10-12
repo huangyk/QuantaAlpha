@@ -68,9 +68,10 @@ def build_ml_panel(codes_all, start, end, blend=0.0):
     return feat, trend_ret
 
 
-def _fit_predict(kind, Xtr, ytr, Xte):
+def _fit_predict(kind, Xtr, ytr, Xte, epochs=200):
     """返回 (pred, prob)：pred=二元择时(0/1)，prob=下月上涨概率(连续, 供软加权)。
 
+    epochs: MLP 训练轮数（周频大量重训时可调小以提速；默认200保持月频原行为）。
     注意：本环境 sklearn.LogisticRegression.fit() 会静默 segfault(二进制兼容bug)，
     故 ML 模型用 lightgbm/xgboost(正常)，DL 用 torch(正常)。
     """
@@ -96,7 +97,7 @@ def _fit_predict(kind, Xtr, ytr, Xte):
             torch.nn.Linear(8, 1), torch.nn.Sigmoid())
         opt = torch.optim.Adam(net.parameters(), lr=1e-3)
         lossf = torch.nn.BCELoss()
-        for _ in range(200):
+        for _ in range(epochs):
             opt.zero_grad(); loss = lossf(net(Xtr_t), ytr_t); loss.backward(); opt.step()
         with torch.no_grad():
             p = net(Xte_t).item()
