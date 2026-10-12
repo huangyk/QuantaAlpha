@@ -256,7 +256,20 @@ def handlebar(ContextInfo):
             prices[c] = float(ContextInfo.get_last_close(c) or 0)
     if total <= 0:                        # 回测兜底：用策略设定的初始资金
         total = float(getattr(ContextInfo, "capital", 0) or 0)
-        print("[absmom] 账户资产不可用, 回测模式用 capital=%.0f" % total)
+        print("[absmom] 账户资产不可用(可能未绑账号), 回退用 capital=%.0f" % total)
+
+    # 资金无效则不下单：模拟模式/未绑账号时 capital 往往是 -1,
+    # 继续算会得到负仓位 -> 必须停下(宁可不下单也不要错单)
+    if total <= 0:
+        print("[absmom] [STOP] 无有效资金(%.0f), 本次不调仓、不下单。" % total)
+        print("[absmom] [STOP] 常见原因: 你跑的是【模型交易】而不是【回测】。")
+        print("[absmom] [STOP] 回测: 点【回测】并设置初始资金(如 80000);")
+        print("[absmom] [STOP] 实盘/模拟: 先在【模型交易】界面绑定资金账号。")
+        return
+
+    if not account_id:
+        print("[absmom] [WARN] account 为空, 无法查持仓与下单。")
+        print("[absmom] [WARN] 回测不需要账号; 实盘请在【模型交易】界面绑定账号。")
     investable = total * EXPOSURE
 
     po = _passorder()
