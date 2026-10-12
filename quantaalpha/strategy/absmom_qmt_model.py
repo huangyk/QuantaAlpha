@@ -40,6 +40,9 @@ SMA_W = 200# 趋势窗口(日)
 VOL_WINDOW = 60        # 波动窗口(日)
 INV_VOL_FLOOR = 0.05        # 波动率下限，防除零
 EXPOSURE = 1.0              # ★风险暴露比例: 1.0=主用档(满仓) / 0.6=低回撤档(60%仓+40%现金)
+# 回测兜底资金: 若QMT回测里 capital 取不到(-1)则用它。单位元。
+# 仅在【回测】生效;【模型交易】实盘/模拟下绝不启用(防止无授权时误算仓位)
+BACKTEST_FALLBACK_CAPITAL = 80000.0
 COMM = 0.0001               # 佣金万1
 # ETF 最小交易单位：100 份（1 手）
 LOT = 100
@@ -254,9 +257,17 @@ def handlebar(ContextInfo):
     if not prices:                        # 回测/非盘中：退回收盘价
         for c in POOL:
             prices[c] = float(ContextInfo.get_last_close(c) or 0)
+    in_backtest = bool(getattr(ContextInfo, "do_back_test", False))
     if total <= 0:                        # 回测兜底：用策略设定的初始资金
-        total = float(getattr(ContextInfo, "capital", 0) or 0)
-        print("[absmom] 账户资产不可用(可能未绑账号), 回退用 capital=%.0f" % total)
+        cap = float(getattr(ContextInfo, "capital", 0) or 0)
+        if cap > 0:
+            total = cap
+            print("[absmom] 账户资产不可用(未绑账号), 回退用回测资金 capital=%.0f" % cap)
+        elif in_backtest:
+            total = BACKTEST_FALLBACK_CAPITAL
+            print("[absmom] 回测资金为空, 使用预设兜底资金=%.0f" % total)
+        else:
+            total = 0.0
 
     # 资金无效则不下单：模拟模式/未绑账号时 capital 往往是 -1,
     # 继续算会得到负仓位 -> 必须停下(宁可不下单也不要错单)
