@@ -45,21 +45,43 @@ IMPACT_ETA = 0.1
 _CACHE = {}
 
 
-def get_data():
+def listed_days_map():
+    """全表每个股票的首个交易日（一次廉价 GROUP BY）→ 上市天数口径与加载区间无关。
+
+    早前做法是 `px.notna().cumsum()`，在"只加载部分区间"时会低估上市天数
+    （2025 起回测若只加载 2024 后的数据，会把 2015 年上市的股票算成次新）。
+    """
+    if "ld0" in _CACHE:
+        return _CACHE["ld0"]
+    conn = psycopg2.connect(**DB)
+    df = pd.read_sql("select asset_code, min(trade_date) as d0 from bars_1d "
+                     "where asset_type='stock' or asset_type is null group by asset_code", conn)
+    conn.close()
+    df["d0"] = pd.to_datetime(df["d0"])
+    _CACHE["ld0"] = dict(zip(df["asset_code"], df["d0"]))
+    return _CACHE["ld0"]
+
+
+def get_data(load_start=None):
     """分块读取 bars_1d，构建 close/open/amount 矩阵（float32，缓存一次）。
 
-    只用 open/close/amount 三列（去掉 high/low/volume 省内存）；
+    只用 open/close/amount/total_shares 四列（去掉 high/low/volume 省内存）；
     (code,date) 有重复行（实测 4.2 万条），分块去重。
+    load_start：数据加载起点（可早于回测起点，为协方差窗口/陈旧宇宙排名留历史）。
     """
     if _CACHE:
         return _CACHE["m"]
+    if load_start:
+        START_ = load_start
+    else:
+        START_ = START
     conn = psycopg2.connect(**DB)
     q = ("select asset_code, trade_date, open, close, amount, total_shares from bars_1d "
          "where trade_date between %s and %s and (asset_type='stock' or asset_type is null) "
          "order by asset_code, trade_date")
     px_p, op_p, amt_p, tsh_p = [], [], [], []
     total = 0
-    for chunk in pd.read_sql(q, conn, params=[START, END], chunksize=800_000):
+    for chunk in pd.read_sql(q, conn, params=[START_, END], chunksize=800_000):
         chunk = chunk.drop_duplicates(subset=["asset_code", "trade_date"], keep="last")
         chunk["trade_date"] = pd.to_datetime(chunk["trade_date"])
         total += len(chunk)
@@ -90,10 +112,15 @@ def get_data():
         rv[mask] = np.broadcast_to(med, rv.shape)[mask]
         ret = pd.DataFrame(rv, index=ret.index, columns=ret.columns)
         print(f"    [复权修正] 剔除 {n_imp} 个物理不可能收益(除权/送转假崩盘)，用当日中位数填充", flush=True)
-    listed_days = px.notna().cumsum()
+    # 上市天数：用全表首交易日，与加载区间无关（见 listed_days_map 注释）
+    d0 = listed_days_map()
+    d0v = np.array([d0.get(c, pd.Timestamp("2100-01-01")).value for c in px.columns], dtype="int64")
+    dv = px.index.values.astype("int64")                      # ns since epoch
+    days = (dv[:, None] - d0v[None, :]) / 86_400_000_000_000.0 + 1.0
+    ld = pd.DataFrame(days.astype("float32"), index=px.index, columns=px.columns)
     print(f"[load] {px.shape[0]} 日 x {px.shape[1]} 只  {px.index.min().date()}~{px.index.max().date()}  去重后 {total} 行"
           f"  mcap非空率 {mcap.notna().mean().mean()*100:.0f}%", flush=True)
-    _CACHE["m"] = (px, op, amt, ret, listed_days)
+    _CACHE["m"] = (px, op, amt, ret, ld)
     _CACHE["mcap"] = mcap
     return _CACHE["m"]
 
@@ -238,12 +265,14 @@ def universe_at(i, px, mcap, amt, listed_days, op, close_prev, fix_date=None):
     return list(cand)
 
 
-def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP, fix_date=None):
-    px, op, amt, ret, listed_days = get_data()
+def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP, fix_date=None,
+             load_start=None, bt_start=None):
+    px, op, amt, ret, listed_days = get_data(load_start=load_start)
     mcap = _CACHE["mcap"]
     dates = px.index
     months = dates.to_period("M")
     n = len(dates)
+    bt0 = dates.searchsorted(pd.Timestamp(bt_start)) if bt_start else 0
     cur_w = {}
     decided = {}
     nav = 1.0
@@ -290,7 +319,7 @@ def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP, fix_date=
                 cur_w = new_w
         # 当日收益
         day_ret = 0.0
-        if cur_w:
+        if cur_w and i >= bt0:
             r = ret_mat.iloc[i]
             s = 0.0
             for code, wt in cur_w.items():
@@ -305,9 +334,12 @@ def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP, fix_date=
                 v = hist.std() * np.sqrt(252)
                 if v > vol_target:
                     port_ret *= vol_target / v
-        nav *= (1 + port_ret)
-        navs[i] = nav
-    return pd.Series(navs, index=dates), turnover_sum, cost_sum_bp
+        if i >= bt0:
+            nav *= (1 + port_ret)
+            navs[i] = nav
+        else:
+            navs[i] = 1.0
+    return pd.Series(navs, index=dates).iloc[bt0:], turnover_sum, cost_sum_bp
 
 
 def perf(nav):
@@ -370,16 +402,17 @@ def main():
 
     # ---------- 最近期 2025-01~2026-10：mcap 失效，用 2024 年底定盘的陈旧宇宙 ----------
     if stage == "recent":
-        START, END = "2025-01-01", "2026-10-13"
-        oos = pd.Timestamp("2025-07-01")       # 前 6 个月当预热，后段当报告外样本
+        START, END = "2025-01-01", "2026-10-13"      # 回测区间
+        LOAD = "2024-01-01"                           # 数据加载起点（留协方差窗口+定盘日）
+        oos = pd.Timestamp("2025-07-01")              # 前 6 个月当预热，后段当报告外样本
         FIX = "2024-12-31"
         print(f"===== 最近期 {START}~{END}，市值排名固定用 {FIX}（陈旧宇宙近似）=====", flush=True)
         for N in [300, 500]:
             UNIVERSE_N = N
             print(f"\n----- 宇宙=2024年底总市值 top{N}（固定）-----", flush=True)
-            run(f"R{N}_等权", "ew", fix_date=FIX)
-            run(f"R{N}_逆波动", "invvol", fix_date=FIX)
-            run(f"R{N}_ERC", "erc", fix_date=FIX)
+            run(f"R{N}_等权", "ew", fix_date=FIX, load_start=LOAD, bt_start=START)
+            run(f"R{N}_逆波动", "invvol", fix_date=FIX, load_start=LOAD, bt_start=START)
+            run(f"R{N}_ERC", "erc", fix_date=FIX, load_start=LOAD, bt_start=START)
 
     out_dir = os.environ.get("QA_OUT_DIR", tempfile.gettempdir())
     path = os.path.join(out_dir, "portfolio_risk_out.json")
