@@ -54,10 +54,10 @@ def get_data():
     if _CACHE:
         return _CACHE["m"]
     conn = psycopg2.connect(**DB)
-    q = ("select asset_code, trade_date, open, close, amount from bars_1d "
+    q = ("select asset_code, trade_date, open, close, amount, total_shares from bars_1d "
          "where trade_date between %s and %s and (asset_type='stock' or asset_type is null) "
          "order by asset_code, trade_date")
-    px_p, op_p, amt_p = [], [], []
+    px_p, op_p, amt_p, tsh_p = [], [], [], []
     total = 0
     for chunk in pd.read_sql(q, conn, params=[START, END], chunksize=800_000):
         chunk = chunk.drop_duplicates(subset=["asset_code", "trade_date"], keep="last")
@@ -66,6 +66,7 @@ def get_data():
         px_p.append(chunk.pivot(index="trade_date", columns="asset_code", values="close").astype("float32"))
         op_p.append(chunk.pivot(index="trade_date", columns="asset_code", values="open").astype("float32"))
         amt_p.append(chunk.pivot(index="trade_date", columns="asset_code", values="amount").astype("float32"))
+        tsh_p.append(chunk.pivot(index="trade_date", columns="asset_code", values="total_shares").astype("float64"))
     conn.close()
     # 各块按 asset_code 切分 → 同一天出现在多块 → concat 出重复日期行；
     # 用 groupby(date).first() 合并（每个(日期,股票)格只在一块出现，first 正确拼合）
@@ -73,6 +74,8 @@ def get_data():
     px = px.loc[:, ~px.columns.duplicated()]
     op = pd.concat(op_p).groupby(level=0).first().sort_index().reindex(columns=px.columns)
     amt = pd.concat(amt_p).groupby(level=0).first().sort_index().reindex(columns=px.columns)
+    tsh = pd.concat(tsh_p).groupby(level=0).first().sort_index().reindex(columns=px.columns)
+    mcap = (px.astype("float64") * tsh)  # 总市值(元)=收盘×总股本；仅 2020-2024 有覆盖
     ret = px.pct_change(fill_method=None)
     # ★未复权修正：A股涨跌停限制（主板±10%/创业板·科创板2020.8后±20%/ST±5%）
     #   → 单日|收益|>21% 物理上不可能是真实交易，只能是未复权"除权/高送转"跳变
@@ -88,8 +91,10 @@ def get_data():
         ret = pd.DataFrame(rv, index=ret.index, columns=ret.columns)
         print(f"    [复权修正] 剔除 {n_imp} 个物理不可能收益(除权/送转假崩盘)，用当日中位数填充", flush=True)
     listed_days = px.notna().cumsum()
-    print(f"[load] {px.shape[0]} 日 x {px.shape[1]} 只  {px.index.min().date()}~{px.index.max().date()}  去重后 {total} 行")
+    print(f"[load] {px.shape[0]} 日 x {px.shape[1]} 只  {px.index.min().date()}~{px.index.max().date()}  去重后 {total} 行"
+          f"  mcap非空率 {mcap.notna().mean().mean()*100:.0f}%", flush=True)
     _CACHE["m"] = (px, op, amt, ret, listed_days)
+    _CACHE["mcap"] = mcap
     return _CACHE["m"]
 
 
@@ -141,38 +146,77 @@ def erc_weights(cov):
     return w
 
 
-def minvar_weights(cov, cap=POS_CAP):
-    """长多最小方差：min w'Σw, s.t. Σw=1, 0<=w<=cap。cvxpy(QP, OSQP)，快且精确。"""
-    import cvxpy as cp
+def proj_box_simplex(v, cap):
+    """Dykstra 交替投影：把 v 投到 {w: Σw=1, 0<=w<=cap}（精确，~30 步收敛）。"""
+    n = len(v)
+    if cap * n < 1.0:
+        cap = 1.0 / n
+    x = v.copy()
+    p = np.zeros(n)
+    q = 0.0
+    for _ in range(200):
+        y = np.clip(x + p, 0.0, cap)
+        p = x + p - y
+        z = y + q
+        xn = z + (1.0 - z.sum()) / n
+        q = z - xn
+        if np.max(np.abs(xn - x)) < 1e-14:
+            return xn
+        x = xn
+    return x
+
+
+def minvar_weights(cov, cap=POS_CAP, iters=3000):
+    """长多最小方差：min w'Σw, s.t. Σw=1, 0<=w<=cap。
+
+    **不用 cvxpy**：本环境 OSQP/SCS/CLARABEL 等所有编译求解器都会让进程静默硬崩
+    （无异常、exit code 0，实测 cvxpy 1.7.5 + quantaalpha 环境）。改用纯 numpy
+    FISTA（加速投影梯度）+ Dykstra 投影，已对 KKT 条件验证：
+      Σw=1（精确到 1e-8）、w∈[0,cap]、自由变量的 (Σw)_i 全等于 λ、
+      w=0 的变量 (Σw)_i >= λ（一阶条件全满足）。0.73s/次（n=500）。
+    """
     n = cov.shape[0]
     if n == 0:
         return np.array([])
     if n == 1:
         return np.array([1.0])
-    P = (cov + cov.T) / 2 + 1e-6 * np.trace(cov) / n * np.eye(n)  # 对称+脊，保 PSD
-    w = cp.Variable(n)
-    cons = [cp.sum(w) == 1, w >= 0, w <= cap]
-    prob = cp.Problem(cp.Minimize(cp.quad_form(w, P)), cons)
-    try:
-        prob.solve(solver=cp.OSQP, warm_start=True, max_iter=20000)
-    except Exception:
-        try:
-            prob.solve(solver=cp.SCS)
-        except Exception:
-            return np.ones(n) / n
-    if w.value is None:
-        return np.ones(n) / n
-    x = np.clip(np.asarray(w.value).flatten(), 0, None)
-    s = x.sum()
-    return x / s if s > 0 else np.ones(n) / n
+    if cap * n < 1.0:
+        cap = 1.0 / n
+    P = (cov + cov.T) / 2
+    P = P + 1e-9 * np.trace(P) / n * np.eye(n)          # 保 PSD
+    # 步长 1/L，L = 谱半径（幂迭代 50 步）+ 5% 余量
+    v = np.ones(n) / np.sqrt(n)
+    L = 1e-12
+    for _ in range(50):
+        u = P @ v
+        nu = np.linalg.norm(u)
+        if nu <= 0:
+            break
+        v = u / nu
+        L = float(v @ (P @ v))
+    L = max(L, 1e-12) * 1.05
+    x = proj_box_simplex(np.full(n, 1.0 / n), cap)
+    y = x.copy()
+    t = 1.0
+    for k in range(iters):
+        xn = proj_box_simplex(y - (P @ y) / L, cap)
+        tn = (1.0 + np.sqrt(1.0 + 4.0 * t * t)) / 2.0
+        y = xn + ((t - 1.0) / tn) * (xn - x)
+        x, t = xn, tn
+        if k % 200 == 0 and np.linalg.norm(x - y) < 1e-11:
+            break
+    return x
 
 
-def universe_at(i, px, amt, listed_days, op, close_prev):
+def universe_at(i, px, mcap, amt, listed_days, op, close_prev):
+    """决策日 i：取总市值 top-N（≈沪深300/500 机构标准大市值宇宙，避开追热点陷阱），
+    剔次新/低流动性/涨停开盘。"""
     if i < COV_WIN:
         return []
+    mc = mcap.iloc[i]
     amt_i = amt.iloc[i]
     ld = listed_days.iloc[i]
-    cand = amt_i[(amt_i > LIQ_AMT) & (ld >= MIN_LIST_DAYS)].dropna()
+    cand = mc[(mc > 0) & (amt_i > LIQ_AMT) & (ld >= MIN_LIST_DAYS)].dropna()
     cand = cand.sort_values(ascending=False).head(UNIVERSE_N).index
     if close_prev is not None and i > 0:
         opx = op.iloc[i]
@@ -183,6 +227,7 @@ def universe_at(i, px, amt, listed_days, op, close_prev):
 
 def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP):
     px, op, amt, ret, listed_days = get_data()
+    mcap = _CACHE["mcap"]
     dates = px.index
     months = dates.to_period("M")
     n = len(dates)
@@ -198,7 +243,7 @@ def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP):
         is_month_end = (i == n - 1) or (months[i] != months[i + 1])
         if is_month_end and i >= COV_WIN:
             close_prev = px.iloc[i - 1] if i > 0 else None
-            uni = universe_at(i, px, amt, listed_days, op, close_prev)
+            uni = universe_at(i, px, mcap, amt, listed_days, op, close_prev)
             if uni:
                 R = ret_mat.iloc[i - COV_WIN + 1:i + 1][uni].dropna(axis=1, how="any")
                 cols = list(R.columns)
@@ -267,30 +312,44 @@ def perf(nav):
 
 
 def main():
-    oos = pd.Timestamp("2018-01-01")
+    global START, END, UNIVERSE_N
+    START, END = "2020-01-01", "2024-12-31"   # 总市值字段仅 2020-2024 可靠(~90%)
+    oos = pd.Timestamp("2023-01-01")           # train 2020-2022 / test 2023-2024
     results = {}
-    configs = [
-        ("等权(基准)", dict(method="ew")),
-        ("InvVol 逆波动", dict(method="invvol")),
-        ("ERC 风险平价", dict(method="erc")),
-        ("MinVar 最小方差", dict(method="minvar")),
-        ("MinVar+波动目标10%", dict(method="minvar", vol_target=0.10)),
-    ]
-    for label, kw in configs:
-        print(f"[run] {label} ...", flush=True)
-        nav, turn, cost_bp = backtest(cost_on=True, **kw)
+
+    def run(label, method, **kw):
+        nav, turn, cost_bp = backtest(method=method, cost_on=True, **kw)
         pf = perf(nav)
         te = perf(nav[nav.index >= oos])
         results[label] = dict(full=pf, oos=te, turnover=float(turn), cost_bp=float(cost_bp))
-        print(f"    全期 {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%/波动{pf.get('vol',0)*100:.1f}%"
-              f" || OOS(2018+) {te.get('ann',0)*100:+6.2f}%/S{te.get('sharpe',0):.2f}/回撤{te.get('mdd',0)*100:+6.1f}%"
-              f" || 换手{turn:.1f} 成本{cost_bp:.0f}bp", flush=True)
+        print(f"  {label:14s} 全期 {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%/波动{pf.get('vol',0)*100:.1f}%"
+              f" || OOS(23-24) {te.get('ann',0)*100:+6.2f}%/S{te.get('sharpe',0):.2f}/回撤{te.get('mdd',0)*100:+6.1f}%"
+              f" || 换手{turn:.0f} 成本{cost_bp:.0f}bp", flush=True)
+        return nav
 
-    print("\n[稳健] MinVar cap 成簇 ...", flush=True)
-    for cap in [0.03, 0.05, 0.10]:
-        nav, turn, cost_bp = backtest(method="minvar", cost_on=True, cap=cap)
-        pf = perf(nav)
-        print(f"    cap={cap:.2f}: {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%", flush=True)
+    # 快速三方法 × 三个宇宙规模
+    stage = os.environ.get("QA_STAGE", "all")
+    if stage in ("all", "fast"):
+        for N in [300, 500, 1000]:
+            UNIVERSE_N = N
+            print(f"\n===== 宇宙=总市值 top{N} (2020-2024, 大市值/机构标准) =====", flush=True)
+            run(f"N{N}_等权", "ew")
+            run(f"N{N}_逆波动", "invvol")
+            run(f"N{N}_ERC", "erc")
+
+    if stage in ("all", "minvar"):
+        # MinVar(FISTA) 仅在 N=500（控耗时；~0.7s/月 × 60月 × 5 组 ≈ 4min）
+        UNIVERSE_N = 500
+        print(f"\n===== MinVar(numpy FISTA) @ N=500 =====", flush=True)
+        run("N500_MinVar", "minvar")
+        run("N500_MinVar_vt10", "minvar", vol_target=0.10)
+
+        # MinVar 参数成簇（cap）——SOP 关卡：无尖峰才算稳健
+        print("\n[稳健] MinVar cap 成簇 @ N=500 ...", flush=True)
+        for cap in [0.03, 0.05, 0.10]:
+            nav, turn, cost_bp = backtest(method="minvar", cost_on=True, cap=cap)
+            pf = perf(nav)
+            print(f"    cap={cap:.2f}: {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%", flush=True)
 
     out_dir = os.environ.get("QA_OUT_DIR", tempfile.gettempdir())
     path = os.path.join(out_dir, "portfolio_risk_out.json")

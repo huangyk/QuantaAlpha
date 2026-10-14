@@ -28,7 +28,7 @@ def main():
     print("xtdata 已连接")
 
     start = "20260901"
-    end = "20261012"
+    end = "20261013"
     ok, fail = 0, []
     for code, name in POOL.items():
         # xtdata 用完整代码如 '510300.SH'；period='1d' 日线

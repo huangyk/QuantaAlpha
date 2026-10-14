@@ -1,0 +1,59 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://quant:quant123456@127.0.0.1:5432/quant_data"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    },
+    "redis": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "redis-mcp-server@latest",
+        "redis-mcp-server",
+        "--url",
+        "redis://127.0.0.1:6379/0"
+      ],
+      "env": {
+        "UV_CACHE_DIR": "D:\\qqmt\\QuantaAlpha\\.uv-cache",
+        "UV_TOOL_DIR": "D:\\qqmt\\QuantaAlpha\\.uv-tools"
+      }
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    },
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    }
+  }
+}

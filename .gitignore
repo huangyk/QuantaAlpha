@@ -83,6 +83,8 @@ all_factors_library*.json
 *.db
 *.ipynb
 *.pth
+*.dmp
+*.ldb
 
 # ---- Cache ----
 *cache*/

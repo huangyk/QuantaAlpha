@@ -1,0 +1,69 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@astudioplus/codegraph-mcp"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {
+        "npm_config_cache": "D:\\qqmt\\QuantaAlpha\\.npm-cache"
+      }
+    },
+    "fetch": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "mcp-server-fetch",
+        "mcp-server-fetch"
+      ],
+      "env": {
+        "UV_CACHE_DIR": "D:\\qqmt\\QuantaAlpha\\.uv-cache",
+        "UV_TOOL_DIR": "D:\\qqmt\\QuantaAlpha\\.uv-tools"
+      }
+    }
+  }
+}

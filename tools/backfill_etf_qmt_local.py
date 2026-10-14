@@ -128,7 +128,10 @@ def parse_dat(path):
                 splits += 1
     rows = []
     for i in range(n):
-        d = dt.datetime.fromtimestamp(ts_[i], tz=timezone.utc).date()
+        # ⚠️ datadir 的 Unix 秒是「交易日 00:00 北京时间」的瞬间(实测 mtime/交易日对应)。
+        #    用 UTC 取 .date() 会比真实交易日早 1 天(库里出现周日行) → 必须按北京时间取日期。
+        d = dt.datetime.fromtimestamp(
+            ts_[i], tz=timezone(dt.timedelta(hours=8))).date()
         rows.append((d, adj_o[i], adj_h[i], adj_l[i], adj_c[i], v[i], a[i]))
     return rows, splits
 
@@ -181,7 +184,9 @@ def parse_code(code):
                 mf *= s; splits += 1
     rows = []
     for i in range(n):
-        d = dt.datetime.fromtimestamp(vals[i][0], tz=timezone.utc).date()
+        # 同 parse_dat: 按北京时间取日期, 否则整体早 1 天。
+        d = dt.datetime.fromtimestamp(
+            vals[i][0], tz=timezone(dt.timedelta(hours=8))).date()
         rows.append((d, adj_o[i], adj_h[i], adj_l[i], adj_c[i], v[i], a[i]))
     return rows, splits
 

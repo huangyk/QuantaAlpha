@@ -1,0 +1,99 @@
+# DSH profile patch 片段示例：把 MCP 客户端挂到 desktop profile。
+# 用法：把下面的 `- insert:` 段落原样追加到
+#   C:\Users\lenovo\.dsh\profiles\desktop\cordis.patch.yml
+# 末尾（该文件本身就是 patch 层，顶层是 YAML 数组）。
+# 保存后 DSH 会热重载（desktop profile 启用 HMR），
+# 新会话里出现 mcp__<serverName>__<tool> 形式的工具。
+#
+# 注意：patch 会整体替换目标行的 config，不深合并；
+# serverName 必须唯一，且符合 [A-Za-z0-9_-]{1,32}。
+
+- insert:
+    # ── 代码开发常用 ────────────────────────────────────────────
+    - id: mcp-memory
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: memory
+        transport: stdio
+        command: cmd
+        args: ['/c', 'npx', '-y', '@modelcontextprotocol/server-memory']
+        env:
+          npm_config_cache: 'D:\qqmt\QuantaAlpha\.npm-cache'
+        failOnStartupError: false
+
+    - id: mcp-sequential-thinking
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: seqthink
+        transport: stdio
+        command: cmd
+        args: ['/c', 'npx', '-y', '@modelcontextprotocol/server-sequential-thinking']
+        env:
+          npm_config_cache: 'D:\qqmt\QuantaAlpha\.npm-cache'
+        failOnStartupError: false
+
+    - id: mcp-context7
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: context7
+        transport: stdio
+        command: cmd
+        args: ['/c', 'npx', '-y', '@upstash/context7-mcp']
+        env:
+          npm_config_cache: 'D:\qqmt\QuantaAlpha\.npm-cache'
+        failOnStartupError: false
+
+    - id: mcp-codegraph
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: codegraph
+        transport: stdio
+        command: cmd
+        args: ['/c', 'npx', '-y', '@astudioplus/codegraph-mcp']
+        cwd: 'D:\qqmt\QuantaAlpha'
+        env:
+          npm_config_cache: 'D:\qqmt\QuantaAlpha\.npm-cache'
+        # codegraph 的 RocksDB 落在 ~/.codegraph，沙箱内不可写时会自动降级
+        # 为纯内存模式（功能可用但不持久化）。
+        failOnStartupError: false
+
+    - id: mcp-fetch
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: fetch
+        transport: stdio
+        command: uvx
+        args: ['--from', 'mcp-server-fetch', 'mcp-server-fetch']
+        env:
+          UV_CACHE_DIR: 'D:\qqmt\QuantaAlpha\.uv-cache'
+          UV_TOOL_DIR: 'D:\qqmt\QuantaAlpha\.uv-tools'
+        failOnStartupError: false
+
+    # ── 量化开发专用 ────────────────────────────────────────────
+    # TimescaleDB quant_data（bars_1d 1231万行 / bars_5m 3140万行）
+    - id: mcp-postgres
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: postgres
+        transport: stdio
+        command: cmd
+        args:
+          - '/c'
+          - 'npx'
+          - '-y'
+          - '@modelcontextprotocol/server-postgres'
+          - 'postgresql://quant:quant123456@127.0.0.1:5432/quant_data'
+        env:
+          npm_config_cache: 'D:\qqmt\QuantaAlpha\.npm-cache'
+        failOnStartupError: false
+
+    - id: mcp-playwright
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: playwright
+        transport: stdio
+        command: cmd
+        args: ['/c', 'npx', '-y', '@playwright/mcp@latest']
+        env:
+          npm_config_cache: 'D:\qqmt\QuantaAlpha\.npm-cache'
+        failOnStartupError: false
