@@ -208,12 +208,25 @@ def minvar_weights(cov, cap=POS_CAP, iters=3000):
     return x
 
 
-def universe_at(i, px, mcap, amt, listed_days, op, close_prev):
+def universe_at(i, px, mcap, amt, listed_days, op, close_prev, fix_date=None):
     """决策日 i：取总市值 top-N（≈沪深300/500 机构标准大市值宇宙，避开追热点陷阱），
-    剔次新/低流动性/涨停开盘。"""
+    剔次新/低流动性/涨停开盘。
+
+    fix_date：若给定，则市值排名**固定用该日**的口径（解决 mcap 字段 2025 后失效）。
+    这是"陈旧宇宙"近似——用 2024-12-31 的市值排名去跑 2025-2026，会漏掉 2025 后
+    新长起来的大盘股、也会留着已萎缩的。无未来函数（排名来自过去的日期），
+    但必须在结论里注明这是近似，不是真实的指数成分股口径。
+    """
     if i < COV_WIN:
         return []
-    mc = mcap.iloc[i]
+    if fix_date is not None:
+        j = mcap.index.searchsorted(pd.Timestamp(fix_date))
+        j = min(max(j, 0), len(mcap) - 1)
+        while j > 0 and mcap.iloc[j].isna().all():
+            j -= 1
+    else:
+        j = i
+    mc = mcap.iloc[j]
     amt_i = amt.iloc[i]
     ld = listed_days.iloc[i]
     cand = mc[(mc > 0) & (amt_i > LIQ_AMT) & (ld >= MIN_LIST_DAYS)].dropna()
@@ -225,7 +238,7 @@ def universe_at(i, px, mcap, amt, listed_days, op, close_prev):
     return list(cand)
 
 
-def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP):
+def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP, fix_date=None):
     px, op, amt, ret, listed_days = get_data()
     mcap = _CACHE["mcap"]
     dates = px.index
@@ -243,7 +256,7 @@ def backtest(method="erc", cost_on=True, vol_target=None, cap=POS_CAP):
         is_month_end = (i == n - 1) or (months[i] != months[i + 1])
         if is_month_end and i >= COV_WIN:
             close_prev = px.iloc[i - 1] if i > 0 else None
-            uni = universe_at(i, px, mcap, amt, listed_days, op, close_prev)
+            uni = universe_at(i, px, mcap, amt, listed_days, op, close_prev, fix_date=fix_date)
             if uni:
                 R = ret_mat.iloc[i - COV_WIN + 1:i + 1][uni].dropna(axis=1, how="any")
                 cols = list(R.columns)
@@ -313,22 +326,26 @@ def perf(nav):
 
 def main():
     global START, END, UNIVERSE_N
-    START, END = "2020-01-01", "2024-12-31"   # 总市值字段仅 2020-2024 可靠(~90%)
-    oos = pd.Timestamp("2023-01-01")           # train 2020-2022 / test 2023-2024
+    stage = os.environ.get("QA_STAGE", "all")
     results = {}
+    oos = pd.Timestamp("2023-01-01")
 
     def run(label, method, **kw):
         nav, turn, cost_bp = backtest(method=method, cost_on=True, **kw)
         pf = perf(nav)
         te = perf(nav[nav.index >= oos])
         results[label] = dict(full=pf, oos=te, turnover=float(turn), cost_bp=float(cost_bp))
-        print(f"  {label:14s} 全期 {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%/波动{pf.get('vol',0)*100:.1f}%"
-              f" || OOS(23-24) {te.get('ann',0)*100:+6.2f}%/S{te.get('sharpe',0):.2f}/回撤{te.get('mdd',0)*100:+6.1f}%"
+        print(f"  {label:20s} 全期 {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%/波动{pf.get('vol',0)*100:.1f}%"
+              f" || {oos.strftime('%Y')}起 {te.get('ann',0)*100:+6.2f}%/S{te.get('sharpe',0):.2f}/回撤{te.get('mdd',0)*100:+6.1f}%"
               f" || 换手{turn:.0f} 成本{cost_bp:.0f}bp", flush=True)
         return nav
 
     # 快速三方法 × 三个宇宙规模
-    stage = os.environ.get("QA_STAGE", "all")
+    # 主区间 2020-2024：总市值字段唯一可靠期（非空率 ~83%）
+    if stage in ("all", "fast", "minvar"):
+        START, END = "2020-01-01", "2024-12-31"
+        oos = pd.Timestamp("2023-01-01")
+
     if stage in ("all", "fast"):
         for N in [300, 500, 1000]:
             UNIVERSE_N = N
@@ -351,11 +368,31 @@ def main():
             pf = perf(nav)
             print(f"    cap={cap:.2f}: {pf.get('ann',0)*100:+6.2f}%/S{pf.get('sharpe',0):.2f}/回撤{pf.get('mdd',0)*100:+6.1f}%", flush=True)
 
+    # ---------- 最近期 2025-01~2026-10：mcap 失效，用 2024 年底定盘的陈旧宇宙 ----------
+    if stage == "recent":
+        START, END = "2025-01-01", "2026-10-13"
+        oos = pd.Timestamp("2025-07-01")       # 前 6 个月当预热，后段当报告外样本
+        FIX = "2024-12-31"
+        print(f"===== 最近期 {START}~{END}，市值排名固定用 {FIX}（陈旧宇宙近似）=====", flush=True)
+        for N in [300, 500]:
+            UNIVERSE_N = N
+            print(f"\n----- 宇宙=2024年底总市值 top{N}（固定）-----", flush=True)
+            run(f"R{N}_等权", "ew", fix_date=FIX)
+            run(f"R{N}_逆波动", "invvol", fix_date=FIX)
+            run(f"R{N}_ERC", "erc", fix_date=FIX)
+
     out_dir = os.environ.get("QA_OUT_DIR", tempfile.gettempdir())
     path = os.path.join(out_dir, "portfolio_risk_out.json")
-    with open(path, "w") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    print(f"\n完成 -> {path}", flush=True)
+    # 合并而非覆盖：QA_STAGE 分段跑时，后一段不能把前一段的结果冲掉
+    prev = {}
+    if os.path.exists(path):
+        try:
+            prev = json.load(open(path))
+        except Exception:
+            prev = {}
+    prev.update(results)
+    json.dump(prev, open(path, "w"), indent=2, ensure_ascii=False)
+    print(f"\n完成 -> {path}（累计 {len(prev)} 组）", flush=True)
 
 
 if __name__ == "__main__":
